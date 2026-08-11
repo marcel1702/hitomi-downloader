@@ -81,6 +81,12 @@ pub struct ComicInfo {
     /// Title of this particular work
     #[yaserde(rename = "Title")]
     pub title: Option<String>,
+    /// The title again, so a reader files every work as a series of its own
+    ///
+    /// Deliberately not Hitomi's series, which is the parody: that would file every work
+    /// sharing a parody under one series instead of listing them separately.
+    #[yaserde(rename = "Series")]
+    pub series: Option<String>,
     /// The Japanese title, which would otherwise be lost
     #[yaserde(rename = "AlternateSeries")]
     pub alternate_series: Option<String>,
@@ -163,6 +169,7 @@ impl ComicInfo {
 
         ComicInfo {
             title: non_empty(comic.title.clone()),
+            series: non_empty(comic.title.clone()),
             alternate_series: non_empty(comic.japanese_title.clone()),
             summary: Some(summary_lines.join("\n")),
             // The crate version is the version the app reports, which `versions_are_in_step`
@@ -384,7 +391,7 @@ mod tests {
     fn missing_data_writes_no_empty_elements() {
         let xml = serialize(&ComicInfo::from_comic(&Comic::default()));
 
-        for element in ["Title", "AlternateSeries", "Characters", "Teams"] {
+        for element in ["Title", "Series", "AlternateSeries", "Characters", "Teams"] {
             assert!(
                 !xml.contains(&format!("<{element}")),
                 "`{element}` should be left out entirely:\n{xml}"
@@ -403,6 +410,16 @@ mod tests {
         assert_eq!(comic_info.penciller, artists);
         assert_eq!(comic_info.inker, artists);
         assert_eq!(comic_info.colorist, artists);
+    }
+
+    #[test]
+    fn the_series_is_the_title_so_works_are_listed_separately() {
+        let comic_info = ComicInfo::from_comic(&full_comic());
+
+        assert_eq!(comic_info.series.as_deref(), Some("Example Work"));
+        assert_eq!(comic_info.series, comic_info.title);
+        // The parody must not end up here, it would group unrelated works
+        assert_ne!(comic_info.series.as_deref(), Some("Example Series"));
     }
 
     #[test]
