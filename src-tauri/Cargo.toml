@@ -1,9 +1,11 @@
 [package]
 name = "hitomi-downloader"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "1.0.0"
+description = "A GUI-based multi-threaded downloader for hitomi.la"
+authors = ["marcel1702 <https://github.com/marcel1702>"]
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/marcel1702/hitomi-downloader"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -55,7 +57,7 @@ image = { version = "0.25.6", features = ["webp"], default-features = false }
 zip = { version = "4.0.0", default-features = false }
 walkdir = { version = "2.5.0" }
 
-# 漏洞修复：强制最低安全版本
+# Security fix: force a minimum safe version
 rand = ">=0.9.3"
 
 # native-tls only links against openssl on Linux (Windows uses schannel,

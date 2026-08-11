@@ -81,12 +81,12 @@ pub struct ComicInfo {
     /// Title of this particular work
     #[yaserde(rename = "Title")]
     pub title: Option<String>,
-    /// The series this work belongs to, which on Hitomi is the parody
-    #[yaserde(rename = "Series")]
-    pub series: Option<String>,
     /// The Japanese title, which would otherwise be lost
     #[yaserde(rename = "AlternateSeries")]
     pub alternate_series: Option<String>,
+    /// Title and gallery link again, for readers that show a description
+    #[yaserde(rename = "Summary")]
+    pub summary: Option<String>,
     /// Where this file came from
     #[yaserde(rename = "Notes")]
     pub notes: Option<String>,
@@ -148,14 +148,29 @@ impl ComicInfo {
 
         let tags: Vec<String> = comic.tags.iter().map(|tag| tag.tag.clone()).collect();
 
+        let web = format!("{HITOMI_GALLERY_BASE_URL}/{}.html", comic.id);
+        // Readers put the summary where a description belongs, so the facts worth seeing at
+        // a glance are repeated here as labelled lines. The series is Hitomi's parody, which
+        // has no element of its own any more. A line whose value is missing is left out.
+        let mut summary_lines = Vec::new();
+        if let Some(title) = non_empty(comic.title.clone()) {
+            summary_lines.push(format!("Title: {title}"));
+        }
+        if let Some(series) = join_non_empty(&comic.parodys) {
+            summary_lines.push(format!("Series: {series}"));
+        }
+        summary_lines.push(format!("URL: {web}"));
+
         ComicInfo {
             title: non_empty(comic.title.clone()),
-            series: join_non_empty(&comic.parodys),
             alternate_series: non_empty(comic.japanese_title.clone()),
-            // No version number here on purpose: `CARGO_PKG_VERSION` is the version of the
-            // Rust crate, which is not the version the app reports (that one comes from
-            // `tauri.conf.json`), so it would put a wrong number into the metadata
-            notes: Some("Downloaded from Hitomi with hitomi-downloader".to_string()),
+            summary: Some(summary_lines.join("\n")),
+            // The crate version is the version the app reports, which `versions_are_in_step`
+            // keeps true, so it is safe to state here
+            notes: Some(format!(
+                "Downloaded from Hitomi with hitomi-downloader {}",
+                env!("CARGO_PKG_VERSION")
+            )),
             year,
             month,
             day,
@@ -166,7 +181,7 @@ impl ComicInfo {
             publisher: "Hitomi".to_string(),
             genre: non_empty(comic.type_field.clone()),
             tags: join_non_empty(&tags),
-            web: Some(format!("{HITOMI_GALLERY_BASE_URL}/{}.html", comic.id)),
+            web: Some(web),
             #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             page_count: comic.files.len() as i32,
             language_iso: language_iso_code(&comic.language),
@@ -369,7 +384,7 @@ mod tests {
     fn missing_data_writes_no_empty_elements() {
         let xml = serialize(&ComicInfo::from_comic(&Comic::default()));
 
-        for element in ["Title", "Series", "AlternateSeries", "Characters", "Teams"] {
+        for element in ["Title", "AlternateSeries", "Characters", "Teams"] {
             assert!(
                 !xml.contains(&format!("<{element}")),
                 "`{element}` should be left out entirely:\n{xml}"
@@ -391,15 +406,43 @@ mod tests {
     }
 
     #[test]
-    fn series_comes_from_the_parody_and_title_from_the_title() {
+    fn the_title_and_the_link_are_written() {
         let comic_info = ComicInfo::from_comic(&full_comic());
 
         assert_eq!(comic_info.title.as_deref(), Some("Example Work"));
-        assert_eq!(comic_info.series.as_deref(), Some("Example Series"));
         assert_eq!(comic_info.teams.as_deref(), Some("Example Circle"));
         assert_eq!(
             comic_info.web.as_deref(),
             Some("https://hitomi.la/galleries/2829145.html")
+        );
+    }
+
+    #[test]
+    fn the_summary_lists_title_series_and_link() {
+        assert_eq!(
+            ComicInfo::from_comic(&full_comic()).summary.as_deref(),
+            Some(
+                "Title: Example Work\n\
+                 Series: Example Series\n\
+                 URL: https://hitomi.la/galleries/2829145.html"
+            )
+        );
+
+        // Without a title and a parody the link is all there is to say
+        assert_eq!(
+            ComicInfo::from_comic(&Comic::default()).summary.as_deref(),
+            Some("URL: https://hitomi.la/galleries/0.html")
+        );
+
+        // A gallery without a parody keeps the other two lines
+        let mut without_parody = full_comic();
+        without_parody.parodys.clear();
+        assert_eq!(
+            ComicInfo::from_comic(&without_parody).summary.as_deref(),
+            Some(
+                "Title: Example Work\n\
+                 URL: https://hitomi.la/galleries/2829145.html"
+            )
         );
     }
 
@@ -432,6 +475,47 @@ mod tests {
         // Cebuano has no ISO 639-1 code, so no element is better than a wrong one
         assert_eq!(language_iso_code("cebuano"), None);
         assert_eq!(language_iso_code(""), None);
+    }
+
+    /// `Notes` states the version of the app, taken from the version of the crate
+    ///
+    /// The app itself reports the version out of `tauri.conf.json`, so the two have to
+    /// agree or the metadata would name a version that never existed. They drifted apart
+    /// once already, which is what this guards against.
+    #[test]
+    fn versions_are_in_step() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        for (label, path) in [
+            ("tauri.conf.json", root.join("tauri.conf.json")),
+            ("package.json", root.join("..").join("package.json")),
+        ] {
+            let contents = std::fs::read_to_string(&path).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&contents).unwrap();
+            let version = value.get("version").and_then(serde_json::Value::as_str);
+
+            assert_eq!(
+                version,
+                Some(env!("CARGO_PKG_VERSION")),
+                "the version in `{label}` differs from the one in Cargo.toml"
+            );
+        }
+    }
+
+    #[test]
+    fn the_notes_name_the_version() {
+        let comic_info = ComicInfo::from_comic(&full_comic());
+
+        assert_eq!(
+            comic_info.notes.as_deref(),
+            Some(
+                format!(
+                    "Downloaded from Hitomi with hitomi-downloader {}",
+                    env!("CARGO_PKG_VERSION")
+                )
+                .as_str()
+            )
+        );
     }
 
     #[test]
