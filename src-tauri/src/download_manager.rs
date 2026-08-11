@@ -298,9 +298,15 @@ impl DownloadTask {
         };
         // finally, save the metadata and cover of this comic
         if let Err(err) = self.save_metadata(&download_dir) {
+            // The library scan finds comics by their metadata file, so without it the
+            // comic stays invisible no matter that its archive is on disk
             let err_title = format!("Failed to save metadata of `{comic_title}`");
             let string_chain = err.to_string_chain();
             tracing::error!(err_title, message = string_chain);
+
+            self.set_state(DownloadTaskState::Failed);
+            self.emit_download_task_update_event();
+
             return;
         }
         if let Err(err) = self.save_cover(&download_dir).await {
@@ -332,6 +338,10 @@ impl DownloadTask {
                 let err_title = format!("Failed to get image urls of `{comic_title}`");
                 let string_chain = err.to_string_chain();
                 tracing::error!(err_title, message = string_chain);
+
+                self.set_state(DownloadTaskState::Failed);
+                self.emit_download_task_update_event();
+
                 return None;
             }
         };
