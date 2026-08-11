@@ -49,7 +49,13 @@ function getOrFetchImage(index: number): Promise<string | undefined> {
     const c = comic.value
     if (!c) return undefined
     const file = c.files[index]
-    const result = await commands.getImageData(c.id, c.isDownloaded ?? null, c.comicDownloadDir ?? null, file)
+    const result = await commands.getImageData(
+      c.id,
+      index,
+      c.isDownloaded ?? null,
+      c.comicDownloadDir ?? null,
+      file,
+    )
     if (result.status === 'ok') {
       const blob = new Blob([new Uint8Array(result.data)])
       return URL.createObjectURL(blob)
