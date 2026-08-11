@@ -41,7 +41,8 @@
     "motivation_message": "Your support motivates me to keep updating and maintaining🙏",
     "software_version": "Version",
     "source_code_repository": "Source Code",
-    "feedback": "Feedback"
+    "feedback": "Feedback",
+    "released_under": "Released under"
   },
   "settings_dialog": {
     "name": "Settings",
@@ -128,5 +129,9 @@
     "quick_download": "Download",
     "resume_download": "Resume",
     "download_again": "Re-download"
+  },
+  "tray": {
+    "show_window": "Show Window",
+    "quit": "Quit"
   }
 }

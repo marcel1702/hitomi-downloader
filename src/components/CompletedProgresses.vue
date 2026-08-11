@@ -40,7 +40,7 @@ function useDropdown() {
   const dropdownX = ref<number>(0)
   const dropdownY = ref<number>(0)
   const dropdownShowing = ref<boolean>(false)
-  const dropdownOptions: DropdownOption[] = [
+  const dropdownOptions = computed<DropdownOption[]>(() => [
     {
       label: t('common.select_all'),
       key: 'select-all',
@@ -85,7 +85,7 @@ function useDropdown() {
         },
       },
     },
-  ]
+  ])
 
   async function showDropdown(e: MouseEvent) {
     dropdownShowing.value = false

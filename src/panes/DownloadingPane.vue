@@ -13,9 +13,52 @@ import { ProgressData } from '../types.ts'
 
 const { t, locale } = useI18n()
 const tabsInstRef = ref<TabsInst | null>(null)
-watch(locale, () => tabsInstRef.value?.syncBarPosition(), { flush: 'post' })
 
 const store = useStore()
+
+/** Build the progress label of a task in the language currently active */
+function buildIndicator(
+  state: ProgressData['state'],
+  downloadedImgCount: number,
+  totalImgCount: number,
+): string {
+  let indicator = ''
+  if (state === 'Pending') {
+    indicator = t('downloading_pane.pending')
+  } else if (state === 'Downloading') {
+    indicator = t('downloading_pane.downloading')
+  } else if (state === 'Paused') {
+    indicator = t('downloading_pane.paused')
+  } else if (state === 'Cancelled') {
+    indicator = t('downloading_pane.cancelled')
+  } else if (state === 'Completed') {
+    indicator = t('downloading_pane.completed')
+  } else if (state === 'Failed') {
+    indicator = t('downloading_pane.failed')
+  }
+  if (totalImgCount !== 0) {
+    indicator += ` ${downloadedImgCount}/${totalImgCount}`
+  }
+  return indicator
+}
+
+watch(
+  locale,
+  () => {
+    tabsInstRef.value?.syncBarPosition()
+    // The indicator is a translated string kept in the store, and a task that is
+    // done never emits another event that would rebuild it, so it has to be
+    // refreshed here or finished downloads keep the label of the old language
+    for (const progressData of store.progresses.values()) {
+      progressData.indicator = buildIndicator(
+        progressData.state,
+        progressData.downloadedImgCount,
+        progressData.totalImgCount,
+      )
+    }
+  },
+  { flush: 'post' },
+)
 
 defineProps<{
   search: (query: string, pageNum: number) => Promise<void>
@@ -36,7 +79,7 @@ onMounted(async () => {
       store.progresses.set(comic.id, {
         ...data,
         percentage: 0,
-        indicator: t('downloading_pane.pending'),
+        indicator: buildIndicator(data.state, data.downloadedImgCount, data.totalImgCount),
       })
     } else if (event === 'Update') {
       const { comicId, state, downloadedImgCount, totalImgCount } = data
@@ -59,25 +102,7 @@ onMounted(async () => {
 
       progressData.percentage = (downloadedImgCount / totalImgCount) * 100
 
-      let indicator = ''
-      if (state === 'Pending') {
-        indicator = t('downloading_pane.pending')
-      } else if (state === 'Downloading') {
-        indicator = t('downloading_pane.downloading')
-      } else if (state === 'Paused') {
-        indicator = t('downloading_pane.paused')
-      } else if (state === 'Cancelled') {
-        indicator = t('downloading_pane.cancelled')
-      } else if (state === 'Completed') {
-        indicator = t('downloading_pane.completed')
-      } else if (state === 'Failed') {
-        indicator = t('downloading_pane.failed')
-      }
-      if (totalImgCount !== 0) {
-        indicator += ` ${downloadedImgCount}/${totalImgCount}`
-      }
-
-      progressData.indicator = indicator
+      progressData.indicator = buildIndicator(state, downloadedImgCount, totalImgCount)
     }
   })
 })

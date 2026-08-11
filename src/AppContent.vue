@@ -13,7 +13,7 @@ import ComicPane from './panes/ComicPane.vue'
 import ReaderPane from './panes/ReaderPane.vue'
 import DownloadingPane from './panes/DownloadingPane.vue'
 import { PhClockCounterClockwise, PhInfo, PhTranslate } from '@phosphor-icons/vue'
-import { locales } from './locales'
+import { locales, resolveLocale } from './locales'
 
 const { t, locale } = useI18n()
 const store = useStore()
@@ -31,12 +31,25 @@ const localeOptions = Object.entries(locales).map(([key, value]) => ({
 
 const searchPaneRef = ref<InstanceType<typeof SearchPane>>()
 const tabsInstRef = ref<TabsInst | null>(null)
-watch(locale, () => {
-  tabsInstRef.value?.syncBarPosition()
-  if (store.config !== undefined) {
-    store.config.language = locale.value
+/** Push the tray labels to the backend, which cannot read the locale files itself */
+async function syncTrayMenuLabels() {
+  const result = await commands.updateTrayMenuLabels(t('tray.show_window'), t('tray.quit'))
+  if (result.status === 'error') {
+    console.error(result.error)
   }
-}, { flush: 'post' })
+}
+
+watch(
+  locale,
+  () => {
+    tabsInstRef.value?.syncBarPosition()
+    if (store.config !== undefined) {
+      store.config.language = locale.value
+    }
+    syncTrayMenuLabels()
+  },
+  { flush: 'post' },
+)
 
 watch(
   () => store.config,
@@ -57,6 +70,11 @@ onMounted(async () => {
   }
   // get the configuration
   store.config = await commands.getConfig()
+  // restore the language the user picked last time, falling back to English for a
+  // config that names a locale this version no longer ships
+  locale.value = resolveLocale(store.config.language)
+  // the watcher above only fires on a change, so the tray needs one explicit sync
+  await syncTrayMenuLabels()
   // check the logs directory size
   const result = await commands.getLogsDirSize()
   if (result.status === 'error') {

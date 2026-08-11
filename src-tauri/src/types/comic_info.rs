@@ -1,11 +1,8 @@
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager};
 use yaserde::{YaDeserialize, YaSerialize};
 
 use super::Comic;
-use crate::config::Config;
 
 /// https://wiki.kavitareader.com/guides/metadata/comics/
 #[derive(
@@ -47,23 +44,21 @@ pub struct ComicInfo {
 }
 
 impl ComicInfo {
-    /// Create the `ComicInfo` of `comic`, translated into the language currently configured
-    pub fn from_comic(app: &AppHandle, comic: &Comic) -> Self {
-        let language = app.state::<RwLock<Config>>().read().language.clone();
-        Self::from_comic_with_language(comic.clone(), language)
-    }
-
-    pub fn from_comic_with_language(comic: Comic, language: String) -> Self {
+    /// Create the `ComicInfo` of `comic`
+    ///
+    /// The type and the tags are Hitomi's own vocabulary and are written as they come,
+    /// so the metadata of an archive does not depend on the language of the interface.
+    pub fn from_comic(comic: &Comic) -> Self {
         ComicInfo {
             manga: "Yes".to_string(),
-            series: comic.title,
+            series: comic.title.clone(),
             writer: comic.artists.join(", "),
             publisher: "Hitomi".to_string(),
-            genre: crate::tags::translate_tag(&comic.type_field, "type", &language),
+            genre: comic.type_field.clone(),
             tags: comic
                 .tags
-                .into_iter()
-                .map(|tag| tag.format_tag(&language))
+                .iter()
+                .map(|tag| tag.tag.clone())
                 .collect::<Vec<String>>()
                 .join(", "),
             number: Some("1".to_string()),

@@ -6,6 +6,14 @@ use tauri::{AppHandle, Manager};
 
 use crate::types::{DownloadFormat, ProxyMode};
 
+/// The languages the interface ships translations for
+///
+/// Kept in step with the locale files under `src/locales`.
+const SUPPORTED_LANGUAGES: [&str; 2] = ["en-US", "de-DE"];
+
+/// The language the interface uses unless the user picks another one
+const DEFAULT_LANGUAGE: &str = "en-US";
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
@@ -25,7 +33,7 @@ impl Config {
         let app_data_dir = app.path().app_data_dir()?;
         let config_path = app_data_dir.join("config.json");
 
-        let config = if config_path.exists() {
+        let mut config = if config_path.exists() {
             let config_string = std::fs::read_to_string(config_path)?;
             match serde_json::from_str(&config_string) {
                 // if deserialization succeeds, use the deserialized Config
@@ -38,6 +46,11 @@ impl Config {
         } else {
             Config::default(&app_data_dir)
         };
+        // A config written by an older version can name a language that is no longer
+        // shipped, which would leave the interface without a selected language
+        if !SUPPORTED_LANGUAGES.contains(&config.language.as_str()) {
+            config.language = DEFAULT_LANGUAGE.to_string();
+        }
         config.save(app)?;
         Ok(config)
     }
@@ -82,7 +95,7 @@ impl Config {
             proxy_mode: ProxyMode::System,
             proxy_host: "127.0.0.1".to_string(),
             proxy_port: 7890,
-            language: "en-US".to_string(),
+            language: DEFAULT_LANGUAGE.to_string(),
         }
     }
 }

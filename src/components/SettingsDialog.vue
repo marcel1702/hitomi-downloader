@@ -111,7 +111,7 @@ async function showConfigInFileManager() {
             <span class="rounded bg-gray-500 px-1 text-white">/</span>
             <div class="bg-gray-200 rounded-md px-2 w-fit">mameroku</div>
             <span class="rounded bg-gray-500 px-1 text-white">/</span>
-            <div class="bg-gray-200 rounded-md px-2 w-fit">[mameroku] Soushi Souai.(2829145) - chinese(中文)</div>
+            <div class="bg-gray-200 rounded-md px-2 w-fit">[mameroku] Soushi Souai.(2829145) - german(Deutsch)</div>
           </div>
           <template #trigger>
             <n-input-group class="box-border">
