@@ -149,17 +149,22 @@ impl ComicInfo {
         let tags: Vec<String> = comic.tags.iter().map(|tag| tag.tag.clone()).collect();
 
         let web = format!("{HITOMI_GALLERY_BASE_URL}/{}.html", comic.id);
-        // Readers put the summary where a description belongs, while `Title` and `Web` tend
-        // to sit in a detail view, so both are repeated here where they are actually seen
-        let summary = match non_empty(comic.title.clone()) {
-            Some(title) => format!("{title}\n{web}"),
-            None => web.clone(),
-        };
+        // Readers put the summary where a description belongs, so the facts worth seeing at
+        // a glance are repeated here as labelled lines. The series is Hitomi's parody, which
+        // has no element of its own any more. A line whose value is missing is left out.
+        let mut summary_lines = Vec::new();
+        if let Some(title) = non_empty(comic.title.clone()) {
+            summary_lines.push(format!("Title: {title}"));
+        }
+        if let Some(series) = join_non_empty(&comic.parodys) {
+            summary_lines.push(format!("Series: {series}"));
+        }
+        summary_lines.push(format!("URL: {web}"));
 
         ComicInfo {
             title: non_empty(comic.title.clone()),
             alternate_series: non_empty(comic.japanese_title.clone()),
-            summary: Some(summary),
+            summary: Some(summary_lines.join("\n")),
             // The crate version is the version the app reports, which `versions_are_in_step`
             // keeps true, so it is safe to state here
             notes: Some(format!(
@@ -413,16 +418,31 @@ mod tests {
     }
 
     #[test]
-    fn the_summary_repeats_the_title_and_the_link() {
+    fn the_summary_lists_title_series_and_link() {
         assert_eq!(
             ComicInfo::from_comic(&full_comic()).summary.as_deref(),
-            Some("Example Work\nhttps://hitomi.la/galleries/2829145.html")
+            Some(
+                "Title: Example Work\n\
+                 Series: Example Series\n\
+                 URL: https://hitomi.la/galleries/2829145.html"
+            )
         );
 
-        // Without a title the link is all there is to say
+        // Without a title and a parody the link is all there is to say
         assert_eq!(
             ComicInfo::from_comic(&Comic::default()).summary.as_deref(),
-            Some("https://hitomi.la/galleries/0.html")
+            Some("URL: https://hitomi.la/galleries/0.html")
+        );
+
+        // A gallery without a parody keeps the other two lines
+        let mut without_parody = full_comic();
+        without_parody.parodys.clear();
+        assert_eq!(
+            ComicInfo::from_comic(&without_parody).summary.as_deref(),
+            Some(
+                "Title: Example Work\n\
+                 URL: https://hitomi.la/galleries/2829145.html"
+            )
         );
     }
 
