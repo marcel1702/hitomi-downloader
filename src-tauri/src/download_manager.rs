@@ -845,7 +845,10 @@ impl Comic {
             .clone();
         let fmt_params = DirFmtParams {
             id: self.id,
-            title: self.title.clone(),
+            // Shortened here rather than only when the whole directory name is clamped,
+            // so that what follows the title in the format string survives. With the
+            // default format that is the id, which is what tells two comics apart.
+            title: crate::utils::truncate_title(&self.title),
             language: self.language.clone(),
             language_localname: self.language_localname.clone(),
             type_field: crate::tags::translate_tag(&self.type_field, "type", &language),
