@@ -1,20 +1,16 @@
-use std::{
-    io::{Read, Write},
-    path::{Path, PathBuf},
-};
+use std::{io::Cursor, path::Path};
 
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use lopdf::{
     content::{Content, Operation},
     dictionary, Document, Object, Stream,
 };
 use tauri::AppHandle;
 use tauri_specta::Event;
-use zip::{write::SimpleFileOptions, ZipWriter};
 
 use crate::{
     events::{ExportCbzEvent, ExportPdfEvent},
-    extensions::PathIsImg,
+    pages::{self, PageSource},
     types::{Comic, ComicInfo},
 };
 
@@ -25,7 +21,7 @@ enum Archive {
 impl Archive {
     pub fn extension(&self) -> &str {
         match self {
-            Archive::Cbz => "cbz",
+            Archive::Cbz => pages::CBZ_EXTENSION,
             Archive::Pdf => "pdf",
         }
     }
@@ -52,15 +48,12 @@ impl Drop for CbzEventGuard {
         }
     }
 }
-#[allow(clippy::cast_possible_wrap)]
-#[allow(clippy::cast_possible_truncation)]
+/// Export the cbz archive of `comic` into the configured export directory
+///
+/// Comics downloaded as a cbz archive are copied, downloads made before the cbz
+/// format was introduced are packed into an archive on the fly.
 pub fn cbz(app: &AppHandle, comic: &Comic) -> anyhow::Result<()> {
     let comic_title = &comic.title;
-    // Generate formatted xml
-    let cfg = yaserde::ser::Config {
-        perform_indent: true,
-        ..Default::default()
-    };
     let event_uuid = uuid::Uuid::new_v4().to_string();
 
     let _ = ExportCbzEvent::Start {
@@ -82,79 +75,44 @@ pub fn cbz(app: &AppHandle, comic: &Comic) -> anyhow::Result<()> {
     let export_dir = comic
         .get_comic_export_dir(app)
         .context("Failed to get comic export directory")?;
-    // Generate ComicInfo
-    use tauri::Manager;
-    let language = app
-        .state::<parking_lot::RwLock<crate::config::Config>>()
-        .read()
-        .language
-        .clone();
-    let comic_info = ComicInfo::from_comic_with_language(comic.clone(), language);
-    // Serialize ComicInfo to xml
-    let comic_info_xml =
-        yaserde::ser::to_string_with_config(&comic_info, &cfg).map_err(|err_msg| {
-            anyhow!("`{comic_title}` failed to serialize `ComicInfo.xml`: {err_msg}")
-        })?;
     // Ensure export directory exists
     std::fs::create_dir_all(&export_dir).context(format!(
         "`{comic_title}` failed to create directory `{}`",
         export_dir.display()
     ))?;
-    // Create cbz file
+
     let extension = Archive::Cbz.extension();
     let download_dir_name = &comic
         .get_comic_download_dir_name()
         .context("Failed to get comic download directory name")?;
-    let zip_path = export_dir.join(format!("{download_dir_name}.{extension}"));
-    let zip_file = std::fs::File::create(&zip_path).context(format!(
-        "`{comic_title}` failed to create file `{}`",
-        zip_path.display()
+    let export_cbz_path = export_dir.join(format!("{download_dir_name}.{extension}"));
+
+    let download_cbz_path = pages::cbz_path_of(download_dir).context(format!(
+        "`{comic_title}` failed to get the cbz path of `{}`",
+        download_dir.display()
     ))?;
-    let mut zip_writer = ZipWriter::new(zip_file);
-    // Write ComicInfo.xml into cbz
-    zip_writer
-        .start_file("ComicInfo.xml", SimpleFileOptions::default())
-        .context(format!(
-            "`{comic_title}` failed to create `ComicInfo.xml` in `{}`",
-            zip_path.display()
+
+    if download_cbz_path.exists() {
+        // The comic was downloaded as a cbz archive, exporting it is just a copy
+        std::fs::copy(&download_cbz_path, &export_cbz_path).context(format!(
+            "`{comic_title}` failed to copy `{}` to `{}`",
+            download_cbz_path.display(),
+            export_cbz_path.display()
         ))?;
-    zip_writer
-        .write_all(comic_info_xml.as_bytes())
-        .context(format!("`{comic_title}` failed to write `ComicInfo.xml`"))?;
-    // Iterate through download directory and write files into cbz
-    let image_paths = std::fs::read_dir(download_dir)
-        .context(format!(
-            "`{comic_title}` failed to read directory `{}`",
+    } else {
+        // The comic was downloaded before the cbz format was introduced,
+        // so its loose pages have to be packed into an archive
+        let comic_info = ComicInfo::from_comic(app, comic);
+        let image_paths = pages::collect_dir_pages(download_dir).context(format!(
+            "`{comic_title}` failed to collect the pages of `{}`",
             download_dir.display()
-        ))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_img());
-    for image_path in image_paths {
-        let filename = match image_path.file_name() {
-            Some(name) => name.to_string_lossy(),
-            None => continue,
-        };
-        // Write file into cbz
-        zip_writer
-            .start_file(&filename, SimpleFileOptions::default())
-            .context(format!(
-                "`{comic_title}` failed to create `{filename}` in `{}`",
-                zip_path.display()
-            ))?;
-        let mut file = std::fs::File::open(&image_path)
-            .context(format!("Failed to open `{}`", image_path.display()))?;
-        std::io::copy(&mut file, &mut zip_writer).context(format!(
-            "`{comic_title}` failed to write `{}` to `{}`",
-            image_path.display(),
-            zip_path.display()
+        ))?;
+
+        pages::write_cbz(&export_cbz_path, &comic_info, &image_paths).context(format!(
+            "`{comic_title}` failed to write `{}`",
+            export_cbz_path.display()
         ))?;
     }
-
-    zip_writer.finish().context(format!(
-        "`{comic_title}` failed to close `{}`",
-        zip_path.display()
-    ))?;
     // Set success to true to ensure that the end event is sent
     cbz_event_guard.success = true;
 
@@ -214,49 +172,33 @@ pub fn pdf(app: &AppHandle, comic: &Comic) -> anyhow::Result<()> {
         .get_comic_download_dir_name()
         .context("Failed to get comic download directory name")?;
     let pdf_path = export_dir.join(format!("{download_dir_name}.{extension}"));
-    create_pdf(download_dir, &pdf_path).context("Failed to create PDF")?;
+    let page_source = PageSource::open(download_dir).context(format!(
+        "Failed to open the pages of `{}`",
+        download_dir.display()
+    ))?;
+    create_pdf(&page_source, &pdf_path).context("Failed to create PDF")?;
     // Set success to true to ensure that the end event is sent
     pdf_event_guard.success = true;
 
     Ok(())
 }
 
-/// Create a PDF with images from `comic_download_dir` and save it to `pdf_path`
+/// Create a PDF with the pages of `page_source` and save it to `pdf_path`
 #[allow(clippy::similar_names)]
 #[allow(clippy::cast_possible_truncation)]
-fn create_pdf(comic_download_dir: &Path, pdf_path: &Path) -> anyhow::Result<()> {
-    let mut image_paths: Vec<PathBuf> = std::fs::read_dir(comic_download_dir)
-        .context(format!(
-            "Failed to read directory `{}`",
-            comic_download_dir.display()
-        ))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_img()) // Filter out metadata.json files
-        .collect();
-    image_paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-
+fn create_pdf(page_source: &PageSource, pdf_path: &Path) -> anyhow::Result<()> {
     let mut doc = Document::with_version("1.5");
     let pages_id = doc.new_object_id();
     let mut page_ids = vec![];
 
-    for image_path in image_paths {
-        if !image_path.is_file() {
-            continue;
-        }
-
-        let buffer = read_image_to_buffer(&image_path).context(format!(
-            "Failed to read `{}` into buffer",
-            image_path.display()
-        ))?;
-        let (width, height) = image::image_dimensions(&image_path).context(format!(
-            "Failed to get dimensions of `{}`",
-            image_path.display()
-        ))?;
-        let image_stream = lopdf::xobject::image_from(buffer).context(format!(
-            "Failed to create image stream for `{}`",
-            image_path.display()
-        ))?;
+    for index in 0..page_source.page_count() {
+        let page_data = page_source
+            .read_page(index)
+            .context(format!("Failed to read page `{index}`"))?;
+        let (width, height) = image_dimensions(&page_data)
+            .context(format!("Failed to get dimensions of page `{index}`"))?;
+        let image_stream = lopdf::xobject::image_from(page_data)
+            .context(format!("Failed to create image stream for page `{index}`"))?;
         // Add image stream to doc
         let img_id = doc.add_object(image_stream);
         // Image name for the Do operation to display the image on the page
@@ -314,14 +256,14 @@ fn create_pdf(comic_download_dir: &Path, pdf_path: &Path) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// Read image data from `image_path` into a buffer
-fn read_image_to_buffer(image_path: &Path) -> anyhow::Result<Vec<u8>> {
-    let file = std::fs::File::open(image_path)
-        .context(format!("Failed to open `{}`", image_path.display()))?;
-    let mut reader = std::io::BufReader::new(file);
-    let mut buffer = vec![];
-    reader
-        .read_to_end(&mut buffer)
-        .context(format!("Failed to read `{}`", image_path.display()))?;
-    Ok(buffer)
+/// Read the dimensions of the image in `image_data`
+///
+/// Only the header of the image is read, it is never decoded.
+fn image_dimensions(image_data: &[u8]) -> anyhow::Result<(u32, u32)> {
+    let dimensions = image::ImageReader::new(Cursor::new(image_data))
+        .with_guessed_format()
+        .context("Failed to guess the image format")?
+        .into_dimensions()
+        .context("Failed to read the image dimensions")?;
+    Ok(dimensions)
 }
