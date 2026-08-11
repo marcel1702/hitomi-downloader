@@ -56,8 +56,14 @@ zip = { version = "4.0.0", default-features = false }
 walkdir = { version = "2.5.0" }
 
 # 漏洞修复：强制最低安全版本
-openssl = ">=0.10.80"
 rand = ">=0.9.3"
+
+# native-tls only links against openssl on Linux (Windows uses schannel,
+# macOS uses Security.framework), so this must stay platform-gated —
+# an unconditional dependency here breaks Windows builds, which don't
+# have a system OpenSSL installation.
+[target.'cfg(not(windows))'.dependencies]
+openssl = ">=0.10.80"
 
 [profile.release]
 strip = true
