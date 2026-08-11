@@ -5,38 +5,16 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Tag/version to release, e.g. v0.1.5-test1 (creates the tag if it does not exist yet)'
-        required: true
-        type: string
 
 permissions:
   contents: write
 
 jobs:
-  prep:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.vars.outputs.version }}
-      tag_name: ${{ steps.vars.outputs.tag_name }}
-    steps:
-      - name: Compute version and tag name
-        id: vars
-        shell: bash
-        run: |
-          tag_name="${{ inputs.version }}"
-          if [ -z "$tag_name" ]; then
-            tag_name="${GITHUB_REF_NAME}"
-          fi
-          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
-          echo "version=${tag_name#v}" >> "$GITHUB_OUTPUT"
-
   checks:
     uses: ./.github/workflows/ci.yml
 
   build:
-    needs: [prep, checks]
+    needs: checks
     strategy:
       fail-fast: false
       matrix:
@@ -81,7 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${{ needs.prep.outputs.version }}"
+          version="${GITHUB_REF_NAME#v}"
           mkdir -p release-assets
           cp src-tauri/target/release/bundle/deb/*.deb "release-assets/hitomi-downloader_${version}_linux_amd64.deb"
           cp src-tauri/target/release/bundle/rpm/*.rpm "release-assets/hitomi-downloader_${version}_linux_amd64.rpm"
@@ -91,7 +69,7 @@ jobs:
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          $version = "${{ needs.prep.outputs.version }}"
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $installer = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter *.exe | Select-Object -First 1
           Copy-Item $installer.FullName "release-assets/hitomi-downloader_${version}_windows_x64.exe"
@@ -104,7 +82,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [prep, build]
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -115,8 +93,8 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.prep.outputs.tag_name }}
-          name: 'hitomi-downloader ${{ needs.prep.outputs.tag_name }}'
+          tag_name: ${{ github.ref_name }}
+          name: 'hitomi-downloader ${{ github.ref_name }}'
           draft: true
           prerelease: false
           files: release-assets/*
