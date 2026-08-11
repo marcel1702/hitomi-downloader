@@ -255,15 +255,71 @@ pub async fn image_url_from_image(
     }
 }
 
+/// Turn the status of a gallery info response into a readable error
+///
+/// Without this the error page of the server would be handed to the json parser, which then
+/// reports that html is not json and buries the actual reason. A removed gallery is the
+/// common case: Hitomi keeps listing such ids among the related galleries of a comic.
+fn check_gallery_status(gallery_id: i32, status: reqwest::StatusCode) -> anyhow::Result<()> {
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(anyhow!(
+            "Gallery `{gallery_id}` does not exist on Hitomi, it was most likely removed"
+        ));
+    }
+
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Failed to get gallery info for `{gallery_id}`, the server answered with `{status}`"
+        ));
+    }
+
+    Ok(())
+}
+
 pub async fn get_gallery_info(gallery_id: i32) -> anyhow::Result<GalleryInfo> {
     let client = HitomiClient::get_api_client();
 
     let url = format!("{PROTOCOL}//{DOMAIN}/galleries/{gallery_id}.js");
     let request = client.read().get(&url);
-    let body = request.send().await?.text().await?;
+    let http_resp = request.send().await?;
+
+    check_gallery_status(gallery_id, http_resp.status())?;
+
+    let body = http_resp.text().await?;
 
     let json_str = body.replace("var galleryinfo = ", "");
-    let gallery_info: GalleryInfo = serde_json::from_str(&json_str)
-        .context(format!("Failed to parse gallery info: {json_str}"))?;
+    let gallery_info: GalleryInfo = serde_json::from_str(&json_str).context(format!(
+        // Only the beginning of the body, so an unexpected answer cannot flood the log
+        "Failed to parse the gallery info of `{gallery_id}`, the answer started with: {}",
+        crate::utils::truncate_to_bytes(json_str.trim(), 200)
+    ))?;
     Ok(gallery_info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_removed_gallery_says_so() {
+        let err = check_gallery_status(2_517_756, reqwest::StatusCode::NOT_FOUND).unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("2517756"), "{message}");
+        assert!(message.contains("does not exist"), "{message}");
+        // The point of the check: no html and no json complaint in the message
+        assert!(!message.contains("expected value"), "{message}");
+    }
+
+    #[test]
+    fn another_failure_names_the_status() {
+        let err = check_gallery_status(1, reqwest::StatusCode::INTERNAL_SERVER_ERROR).unwrap_err();
+
+        assert!(err.to_string().contains("500"), "{err}");
+    }
+
+    #[test]
+    fn a_reachable_gallery_passes() {
+        assert!(check_gallery_status(1, reqwest::StatusCode::OK).is_ok());
+    }
 }
