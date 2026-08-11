@@ -152,10 +152,12 @@ impl ComicInfo {
             title: non_empty(comic.title.clone()),
             series: join_non_empty(&comic.parodys),
             alternate_series: non_empty(comic.japanese_title.clone()),
-            // No version number here on purpose: `CARGO_PKG_VERSION` is the version of the
-            // Rust crate, which is not the version the app reports (that one comes from
-            // `tauri.conf.json`), so it would put a wrong number into the metadata
-            notes: Some("Downloaded from Hitomi with hitomi-downloader".to_string()),
+            // The crate version is the version the app reports, which `versions_are_in_step`
+            // keeps true, so it is safe to state here
+            notes: Some(format!(
+                "Downloaded from Hitomi with hitomi-downloader {}",
+                env!("CARGO_PKG_VERSION")
+            )),
             year,
             month,
             day,
@@ -432,6 +434,47 @@ mod tests {
         // Cebuano has no ISO 639-1 code, so no element is better than a wrong one
         assert_eq!(language_iso_code("cebuano"), None);
         assert_eq!(language_iso_code(""), None);
+    }
+
+    /// `Notes` states the version of the app, taken from the version of the crate
+    ///
+    /// The app itself reports the version out of `tauri.conf.json`, so the two have to
+    /// agree or the metadata would name a version that never existed. They drifted apart
+    /// once already, which is what this guards against.
+    #[test]
+    fn versions_are_in_step() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        for (label, path) in [
+            ("tauri.conf.json", root.join("tauri.conf.json")),
+            ("package.json", root.join("..").join("package.json")),
+        ] {
+            let contents = std::fs::read_to_string(&path).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&contents).unwrap();
+            let version = value.get("version").and_then(serde_json::Value::as_str);
+
+            assert_eq!(
+                version,
+                Some(env!("CARGO_PKG_VERSION")),
+                "the version in `{label}` differs from the one in Cargo.toml"
+            );
+        }
+    }
+
+    #[test]
+    fn the_notes_name_the_version() {
+        let comic_info = ComicInfo::from_comic(&full_comic());
+
+        assert_eq!(
+            comic_info.notes.as_deref(),
+            Some(
+                format!(
+                    "Downloaded from Hitomi with hitomi-downloader {}",
+                    env!("CARGO_PKG_VERSION")
+                )
+                .as_str()
+            )
+        );
     }
 
     #[test]
