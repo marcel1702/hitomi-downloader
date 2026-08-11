@@ -26,7 +26,8 @@ use crate::{
     extensions::AnyhowErrorToStringChain,
     hitomi::{image_url_from_image, Ext},
     hitomi_client::HitomiClient,
-    types::{Comic, DownloadFormat},
+    pages,
+    types::{Comic, ComicInfo, DownloadFormat},
     utils::filename_filter,
 };
 
@@ -281,11 +282,11 @@ impl DownloadTask {
             return;
         }
         // all images of this comic are downloaded successfully
-        let download_dir = match self.rename_temp_download_dir(&temp_download_dir) {
+        let download_dir = match self.pack_temp_download_dir(&temp_download_dir) {
             Ok(download_dir) => download_dir,
             Err(err) => {
                 let err_title =
-                    format!("Failed to rename temp download directory of `{comic_title}`");
+                    format!("Failed to pack the downloaded images of `{comic_title}` into a cbz");
                 let string_chain = err.to_string_chain();
                 tracing::error!(err_title, message = string_chain);
 
@@ -297,9 +298,15 @@ impl DownloadTask {
         };
         // finally, save the metadata and cover of this comic
         if let Err(err) = self.save_metadata(&download_dir) {
+            // The library scan finds comics by their metadata file, so without it the
+            // comic stays invisible no matter that its archive is on disk
             let err_title = format!("Failed to save metadata of `{comic_title}`");
             let string_chain = err.to_string_chain();
             tracing::error!(err_title, message = string_chain);
+
+            self.set_state(DownloadTaskState::Failed);
+            self.emit_download_task_update_event();
+
             return;
         }
         if let Err(err) = self.save_cover(&download_dir).await {
@@ -331,6 +338,10 @@ impl DownloadTask {
                 let err_title = format!("Failed to get image urls of `{comic_title}`");
                 let string_chain = err.to_string_chain();
                 tracing::error!(err_title, message = string_chain);
+
+                self.set_state(DownloadTaskState::Failed);
+                self.emit_download_task_update_event();
+
                 return None;
             }
         };
@@ -562,8 +573,13 @@ impl DownloadTask {
         Ok(())
     }
 
-    /// Rename the temporary download directory to the download directory, return the download directory
-    fn rename_temp_download_dir(&self, temp_download_dir: &Path) -> anyhow::Result<PathBuf> {
+    /// Pack the images in the temporary download directory into the comic's cbz archive,
+    /// return the download directory
+    ///
+    /// The archive is written next to `metadata.json` and `cover.webp`, which the caller
+    /// writes afterwards. The download directory itself is never deleted, so the metadata
+    /// and cover of an earlier download of the same comic survive until they are overwritten.
+    fn pack_temp_download_dir(&self, temp_download_dir: &Path) -> anyhow::Result<PathBuf> {
         let id = self.comic.id;
         let comic_title = &self.comic.title;
 
@@ -573,28 +589,79 @@ impl DownloadTask {
             .clone()
             .context("`comic_download_dir` is None")?;
 
-        if download_dir.exists() {
-            std::fs::remove_dir_all(&download_dir).context(format!(
-                "Failed to delete directory `{}`",
-                download_dir.display()
-            ))?;
-        }
-
-        std::fs::rename(temp_download_dir, &download_dir).context(format!(
-            "Failed to rename `{}` to `{}`",
-            temp_download_dir.display(),
+        std::fs::create_dir_all(&download_dir).context(format!(
+            "Failed to create directory `{}`",
             download_dir.display()
         ))?;
 
+        let cbz_path = pages::cbz_path_of(&download_dir).context(format!(
+            "Failed to get the cbz path of `{}`",
+            download_dir.display()
+        ))?;
+        // Write the archive to a temporary path first, so an interrupted run can never
+        // leave a half written archive behind that later looks like a finished download
+        let cbz_tmp_path = pages::cbz_tmp_path_of(&cbz_path);
+
+        let comic_info = ComicInfo::from_comic(&self.app, &self.comic);
+        let image_paths = pages::collect_dir_pages(temp_download_dir).context(format!(
+            "Failed to collect the downloaded images in `{}`",
+            temp_download_dir.display()
+        ))?;
+
+        if let Err(err) = pages::write_cbz(&cbz_tmp_path, &comic_info, &image_paths) {
+            // Leave the temporary download directory in place so the next run can resume from it
+            let _ = std::fs::remove_file(&cbz_tmp_path);
+            return Err(err).context(format!("Failed to write `{}`", cbz_tmp_path.display()));
+        }
+
+        std::fs::rename(&cbz_tmp_path, &cbz_path).context(format!(
+            "Failed to rename `{}` to `{}`",
+            cbz_tmp_path.display(),
+            cbz_path.display()
+        ))?;
         tracing::trace!(
             id,
             comic_title,
-            "Rename temp download directory of `{}` successfully",
-            temp_download_dir.display()
+            "Packed the downloaded images into `{}` successfully",
+            cbz_path.display()
         );
+        // The comic is on disk from here on, so a problem while tidying up is logged
+        // instead of failing a download that already succeeded
+        if let Err(err) = clean_up_after_packing(temp_download_dir, &download_dir) {
+            let err_title = format!("Failed to clean up after packing `{comic_title}`");
+            let string_chain = err.to_string_chain();
+            tracing::warn!(err_title, message = string_chain);
+        }
 
         Ok(download_dir)
     }
+}
+
+/// Delete what the finished archive replaces
+///
+/// That is the images just downloaded, and the loose pages of an earlier folder style
+/// download of the same comic, which would otherwise sit next to the archive as a stale
+/// duplicate. `collect_dir_pages` skips the cover and `metadata.json` is not an image,
+/// so neither of them is touched here.
+fn clean_up_after_packing(temp_download_dir: &Path, download_dir: &Path) -> anyhow::Result<()> {
+    std::fs::remove_dir_all(temp_download_dir).context(format!(
+        "Failed to delete directory `{}`",
+        temp_download_dir.display()
+    ))?;
+
+    let stale_image_paths = pages::collect_dir_pages(download_dir).context(format!(
+        "Failed to collect the stale images in `{}`",
+        download_dir.display()
+    ))?;
+
+    for stale_image_path in stale_image_paths {
+        std::fs::remove_file(&stale_image_path).context(format!(
+            "Failed to delete file `{}`",
+            stale_image_path.display()
+        ))?;
+    }
+
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -802,7 +869,10 @@ impl Comic {
             .clone();
         let fmt_params = DirFmtParams {
             id: self.id,
-            title: self.title.clone(),
+            // Shortened here rather than only when the whole directory name is clamped,
+            // so that what follows the title in the format string survives. With the
+            // default format that is the id, which is what tells two comics apart.
+            title: crate::utils::truncate_title(&self.title),
             language: self.language.clone(),
             language_localname: self.language_localname.clone(),
             type_field: crate::tags::translate_tag(&self.type_field, "type", &language),

@@ -1,8 +1,11 @@
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use tauri::{AppHandle, Manager};
 use yaserde::{YaDeserialize, YaSerialize};
 
 use super::Comic;
+use crate::config::Config;
 
 /// https://wiki.kavitareader.com/guides/metadata/comics/
 #[derive(
@@ -44,6 +47,12 @@ pub struct ComicInfo {
 }
 
 impl ComicInfo {
+    /// Create the `ComicInfo` of `comic`, translated into the language currently configured
+    pub fn from_comic(app: &AppHandle, comic: &Comic) -> Self {
+        let language = app.state::<RwLock<Config>>().read().language.clone();
+        Self::from_comic_with_language(comic.clone(), language)
+    }
+
     pub fn from_comic_with_language(comic: Comic, language: String) -> Self {
         ComicInfo {
             manga: "Yes".to_string(),

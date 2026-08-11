@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context};
 use indexmap::IndexMap;
@@ -18,6 +18,7 @@ use crate::{
     hitomi::{image_url_from_image, Ext, GalleryFiles},
     hitomi_client::HitomiClient,
     logger,
+    pages::PageSource,
     types::{Comic, SearchResult},
 };
 
@@ -459,13 +460,28 @@ pub fn get_synced_comic(app: AppHandle, mut comic: Comic) -> CommandResult<Comic
     Ok(comic)
 }
 
+/// Read page `index` of the comic downloaded to `download_dir`
+fn read_local_page(download_dir: &Path, index: usize) -> anyhow::Result<Vec<u8>> {
+    let page_source = PageSource::open(download_dir).context(format!(
+        "Failed to open the pages of `{}`",
+        download_dir.display()
+    ))?;
+
+    let page_data = page_source.read_page(index).context(format!(
+        "Failed to read page `{index}` of `{}`",
+        download_dir.display()
+    ))?;
+
+    Ok(page_data)
+}
+
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command(async)]
 #[specta::specta]
 pub async fn get_image_data(
-    _app: AppHandle,
     hitomi_client: State<'_, HitomiClient>,
     comic_id: i32,
+    index: usize,
     is_downloaded: Option<bool>,
     comic_download_dir: Option<String>,
     file: GalleryFiles,
@@ -473,20 +489,14 @@ pub async fn get_image_data(
     // First try local if downloaded
     if let Some(true) = is_downloaded {
         if let Some(ref download_dir) = comic_download_dir {
-            let dir = PathBuf::from(download_dir);
-
-            // Check webp then avif (or other extensions) based on how Hitomi saves
-            let mut file_path = dir.join(format!("{}.webp", file.name));
-            if !file_path.exists() {
-                file_path = dir.join(format!("{}.avif", file.name));
-            }
-            if !file_path.exists() {
-                file_path = dir.join(&file.name);
-            }
-
-            if file_path.exists() {
-                if let Ok(data) = fs::read(&file_path) {
-                    return Ok(data);
+            match read_local_page(Path::new(download_dir), index) {
+                Ok(page_data) => return Ok(page_data),
+                Err(err) => {
+                    // Reading locally is only an optimization, so fall back to the network
+                    let err_title =
+                        format!("Failed to read page `{index}` of `{download_dir}` locally, falling back to the network");
+                    let string_chain = err.to_string_chain();
+                    tracing::warn!(err_title, message = string_chain);
                 }
             }
         }
