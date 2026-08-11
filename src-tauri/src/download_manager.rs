@@ -609,35 +609,49 @@ impl DownloadTask {
             cbz_tmp_path.display(),
             cbz_path.display()
         ))?;
-        // The archive is complete, the downloaded images are not needed anymore
-        std::fs::remove_dir_all(temp_download_dir).context(format!(
-            "Failed to delete directory `{}`",
-            temp_download_dir.display()
-        ))?;
-        // Drop the loose pages of an earlier folder style download of this comic,
-        // otherwise they would sit next to the archive as a stale duplicate.
-        // `collect_dir_pages` skips the cover, and `metadata.json` is not an image,
-        // so neither of them is touched here.
-        let stale_image_paths = pages::collect_dir_pages(&download_dir).context(format!(
-            "Failed to collect the stale images in `{}`",
-            download_dir.display()
-        ))?;
-        for stale_image_path in stale_image_paths {
-            std::fs::remove_file(&stale_image_path).context(format!(
-                "Failed to delete file `{}`",
-                stale_image_path.display()
-            ))?;
-        }
-
         tracing::trace!(
             id,
             comic_title,
             "Packed the downloaded images into `{}` successfully",
             cbz_path.display()
         );
+        // The comic is on disk from here on, so a problem while tidying up is logged
+        // instead of failing a download that already succeeded
+        if let Err(err) = clean_up_after_packing(temp_download_dir, &download_dir) {
+            let err_title = format!("Failed to clean up after packing `{comic_title}`");
+            let string_chain = err.to_string_chain();
+            tracing::warn!(err_title, message = string_chain);
+        }
 
         Ok(download_dir)
     }
+}
+
+/// Delete what the finished archive replaces
+///
+/// That is the images just downloaded, and the loose pages of an earlier folder style
+/// download of the same comic, which would otherwise sit next to the archive as a stale
+/// duplicate. `collect_dir_pages` skips the cover and `metadata.json` is not an image,
+/// so neither of them is touched here.
+fn clean_up_after_packing(temp_download_dir: &Path, download_dir: &Path) -> anyhow::Result<()> {
+    std::fs::remove_dir_all(temp_download_dir).context(format!(
+        "Failed to delete directory `{}`",
+        temp_download_dir.display()
+    ))?;
+
+    let stale_image_paths = pages::collect_dir_pages(download_dir).context(format!(
+        "Failed to collect the stale images in `{}`",
+        download_dir.display()
+    ))?;
+
+    for stale_image_path in stale_image_paths {
+        std::fs::remove_file(&stale_image_path).context(format!(
+            "Failed to delete file `{}`",
+            stale_image_path.display()
+        ))?;
+    }
+
+    Ok(())
 }
 
 #[derive(Clone)]
