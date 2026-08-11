@@ -7,7 +7,6 @@ use parking_lot::RwLock;
 use reqwest::{Client, StatusCode};
 use reqwest_middleware::ClientWithMiddleware;
 use reqwest_retry::{policies::ExponentialBackoff, Jitter, RetryTransientMiddleware};
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::{
@@ -17,13 +16,6 @@ use crate::{
     types::{Comic, ProxyMode, SearchResult},
     utils::get_app_handle,
 };
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LoginResp {
-    pub ret: bool,
-    pub html: String,
-}
 
 #[derive(Clone)]
 pub struct HitomiClient {

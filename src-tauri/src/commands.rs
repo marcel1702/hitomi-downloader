@@ -162,7 +162,7 @@ pub fn export_cbz(app: AppHandle, comic: Comic) -> CommandResult<()> {
 #[specta::specta]
 pub async fn download_comics_by_ids(
     hitomi_client: State<'_, HitomiClient>,
-    download_manager: State<DownloadManager>,
+    download_manager: State<'_, DownloadManager>,
     ids: Vec<i32>,
 ) -> CommandResult<()> {
     let total = ids.len();
@@ -172,20 +172,40 @@ pub async fn download_comics_by_ids(
         let comic = match hitomi_client.get_comic(*id).await {
             Ok(comic) => comic,
             Err(err) => {
-                let err_title = format!("Failed to get comic info for ID `{id}`, skipping ({}/{})", i + 1, total);
+                let err_title = format!(
+                    "Failed to get comic info for ID `{id}`, skipping ({}/{})",
+                    i + 1,
+                    total
+                );
                 let string_chain = err.to_string_chain();
                 tracing::error!(err_title, message = string_chain);
                 continue;
             }
         };
         if let Err(err) = download_manager.create_download_task(comic) {
-            let err_title = format!("Failed to create download task for ID `{id}`, skipping ({}/{})", i + 1, total);
+            let err_title = format!(
+                "Failed to create download task for ID `{id}`, skipping ({}/{})",
+                i + 1,
+                total
+            );
             let string_chain = err.to_string_chain();
             tracing::error!(err_title, message = string_chain);
         }
     }
 
     tracing::info!(total, "Batch download by IDs completed");
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pause_download_task(download_manager: State<DownloadManager>, id: i32) -> CommandResult<()> {
+    download_manager.pause_download_task(id).map_err(|err| {
+        let err_msg = format!("Failed to pause download task with ID `{id}`");
+        CommandError::from(&err_msg, err)
+    })?;
+    tracing::debug!("Paused download task with ID `{id}` successfully");
     Ok(())
 }
 
@@ -351,18 +371,6 @@ pub fn export_pdf(app: AppHandle, comic: Comic) -> CommandResult<()> {
         CommandError::from(&format!("Failed to export pdf for comic `{title}`"), err)
     })?;
     tracing::debug!("Exported pdf for comic `{title}` successfully");
-    Ok(())
-}
-
-#[tauri::command(async)]
-#[specta::specta]
-#[allow(clippy::needless_pass_by_value)]
-pub fn export_cbz(app: AppHandle, comic: Comic) -> CommandResult<()> {
-    let title = &comic.title;
-    export::cbz(&app, &comic).map_err(|err| {
-        CommandError::from(&format!("Failed to export cbz for comic `{title}`"), err)
-    })?;
-    tracing::debug!("Exported cbz for comic `{title}` successfully");
     Ok(())
 }
 
