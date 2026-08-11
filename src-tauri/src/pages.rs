@@ -31,6 +31,13 @@ pub fn cbz_path_of(download_dir: &Path) -> anyhow::Result<PathBuf> {
     Ok(download_dir.join(format!("{download_dir_name}.{CBZ_EXTENSION}")))
 }
 
+/// Path a cbz archive is written to before it is renamed to `cbz_path`
+pub fn cbz_tmp_path_of(cbz_path: &Path) -> PathBuf {
+    let mut tmp_path = cbz_path.as_os_str().to_os_string();
+    tmp_path.push(".tmp");
+    PathBuf::from(tmp_path)
+}
+
 /// Collect the page images lying loose in `dir`, sorted by file name
 ///
 /// `read_dir` yields entries in an arbitrary order, so they have to be sorted
