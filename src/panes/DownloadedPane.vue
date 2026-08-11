@@ -197,7 +197,7 @@ function useContextMenu() {
   const contextMenuX = ref<number>(0)
   const contextMenuY = ref<number>(0)
   const contextMenuShowing = ref<boolean>(false)
-  const contextMenuOptions: DropdownOption[] = [
+  const contextMenuOptions = computed<DropdownOption[]>(() => [
     {
       label: t('common.select_all'),
       key: 'select-all',
@@ -264,7 +264,7 @@ function useContextMenu() {
         },
       },
     },
-  ]
+  ])
 
   async function showContextMenu(e: MouseEvent) {
     contextMenuShowing.value = false
