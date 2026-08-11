@@ -81,12 +81,12 @@ pub struct ComicInfo {
     /// Title of this particular work
     #[yaserde(rename = "Title")]
     pub title: Option<String>,
-    /// The series this work belongs to, which on Hitomi is the parody
-    #[yaserde(rename = "Series")]
-    pub series: Option<String>,
     /// The Japanese title, which would otherwise be lost
     #[yaserde(rename = "AlternateSeries")]
     pub alternate_series: Option<String>,
+    /// Title and gallery link again, for readers that show a description
+    #[yaserde(rename = "Summary")]
+    pub summary: Option<String>,
     /// Where this file came from
     #[yaserde(rename = "Notes")]
     pub notes: Option<String>,
@@ -148,10 +148,18 @@ impl ComicInfo {
 
         let tags: Vec<String> = comic.tags.iter().map(|tag| tag.tag.clone()).collect();
 
+        let web = format!("{HITOMI_GALLERY_BASE_URL}/{}.html", comic.id);
+        // Readers put the summary where a description belongs, while `Title` and `Web` tend
+        // to sit in a detail view, so both are repeated here where they are actually seen
+        let summary = match non_empty(comic.title.clone()) {
+            Some(title) => format!("{title}\n{web}"),
+            None => web.clone(),
+        };
+
         ComicInfo {
             title: non_empty(comic.title.clone()),
-            series: join_non_empty(&comic.parodys),
             alternate_series: non_empty(comic.japanese_title.clone()),
+            summary: Some(summary),
             // The crate version is the version the app reports, which `versions_are_in_step`
             // keeps true, so it is safe to state here
             notes: Some(format!(
@@ -168,7 +176,7 @@ impl ComicInfo {
             publisher: "Hitomi".to_string(),
             genre: non_empty(comic.type_field.clone()),
             tags: join_non_empty(&tags),
-            web: Some(format!("{HITOMI_GALLERY_BASE_URL}/{}.html", comic.id)),
+            web: Some(web),
             #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             page_count: comic.files.len() as i32,
             language_iso: language_iso_code(&comic.language),
@@ -371,7 +379,7 @@ mod tests {
     fn missing_data_writes_no_empty_elements() {
         let xml = serialize(&ComicInfo::from_comic(&Comic::default()));
 
-        for element in ["Title", "Series", "AlternateSeries", "Characters", "Teams"] {
+        for element in ["Title", "AlternateSeries", "Characters", "Teams"] {
             assert!(
                 !xml.contains(&format!("<{element}")),
                 "`{element}` should be left out entirely:\n{xml}"
@@ -393,15 +401,28 @@ mod tests {
     }
 
     #[test]
-    fn series_comes_from_the_parody_and_title_from_the_title() {
+    fn the_title_and_the_link_are_written() {
         let comic_info = ComicInfo::from_comic(&full_comic());
 
         assert_eq!(comic_info.title.as_deref(), Some("Example Work"));
-        assert_eq!(comic_info.series.as_deref(), Some("Example Series"));
         assert_eq!(comic_info.teams.as_deref(), Some("Example Circle"));
         assert_eq!(
             comic_info.web.as_deref(),
             Some("https://hitomi.la/galleries/2829145.html")
+        );
+    }
+
+    #[test]
+    fn the_summary_repeats_the_title_and_the_link() {
+        assert_eq!(
+            ComicInfo::from_comic(&full_comic()).summary.as_deref(),
+            Some("Example Work\nhttps://hitomi.la/galleries/2829145.html")
+        );
+
+        // Without a title the link is all there is to say
+        assert_eq!(
+            ComicInfo::from_comic(&Comic::default()).summary.as_deref(),
+            Some("https://hitomi.la/galleries/0.html")
         );
     }
 
