@@ -165,6 +165,30 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  /**
+   * Translate the labels of the system tray menu
+   *
+   * The tray is rendered by the operating system and cannot read the frontend locale
+   * files, so the frontend passes the already translated labels in. It calls this once
+   * on startup and again on every language change.
+   */
+  async updateTrayMenuLabels(
+    showWindow: string,
+    quit: string,
+  ): Promise<Result<null, CommandError>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("update_tray_menu_labels", {
+          showWindow,
+          quit,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async getCoverData(
     coverUrl: string,
     comicDownloadDir: string | null,

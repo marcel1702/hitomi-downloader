@@ -2,10 +2,10 @@
 import { computed, onMounted } from 'vue'
 import { Comic, commands } from '../bindings.ts'
 import { useStore } from '../store.ts'
-import { useI18n, translateTag } from '../utils.ts'
+import { useI18n } from '../utils.ts'
 import DownloadButton from './DownloadButton.vue'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const props = withDefaults(
   defineProps<{
@@ -126,7 +126,7 @@ function tagNs(female: number, male: number): string {
             size="tiny"
             :color="tagColor(female, male)"
             @click="search(`${tagNs(female, male)}:${tag.replace(' ', '_')}`, 1)">
-            {{ translateTag(tag, tagNs(female, male), locale) }}
+            {{ tag }}
           </n-button>
         </div>
         <div class="flex items-center gap-col-1">

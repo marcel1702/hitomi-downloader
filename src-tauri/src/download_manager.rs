@@ -602,7 +602,7 @@ impl DownloadTask {
         // leave a half written archive behind that later looks like a finished download
         let cbz_tmp_path = pages::cbz_tmp_path_of(&cbz_path);
 
-        let comic_info = ComicInfo::from_comic(&self.app, &self.comic);
+        let comic_info = ComicInfo::from_comic(&self.comic);
         let image_paths = pages::collect_dir_pages(temp_download_dir).context(format!(
             "Failed to collect the downloaded images in `{}`",
             temp_download_dir.display()
@@ -862,11 +862,6 @@ impl Comic {
     fn update_dir_name_fields_by_fmt(&mut self, app: &AppHandle) -> anyhow::Result<()> {
         let comic_title = &self.title;
 
-        let language = app
-            .state::<parking_lot::RwLock<crate::config::Config>>()
-            .read()
-            .language
-            .clone();
         let fmt_params = DirFmtParams {
             id: self.id,
             // Shortened here rather than only when the whole directory name is clamped,
@@ -875,13 +870,13 @@ impl Comic {
             title: crate::utils::truncate_title(&self.title),
             language: self.language.clone(),
             language_localname: self.language_localname.clone(),
-            type_field: crate::tags::translate_tag(&self.type_field, "type", &language),
+            type_field: self.type_field.clone(),
             artists: self.artists.join(", "),
             tags: {
                 let mut joined_tags = self
                     .tags
                     .iter()
-                    .map(|tag| tag.format_tag(&language))
+                    .map(|tag| tag.tag.clone())
                     .collect::<Vec<String>>()
                     .join(", ");
                 if joined_tags.chars().count() > 100 {

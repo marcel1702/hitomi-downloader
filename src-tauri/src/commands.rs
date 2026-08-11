@@ -20,6 +20,7 @@ use crate::{
     logger,
     pages::PageSource,
     types::{Comic, SearchResult},
+    TrayMenuItems,
 };
 
 #[tauri::command]
@@ -409,6 +410,35 @@ pub fn get_logs_dir_size(app: AppHandle) -> CommandResult<u64> {
         .sum::<u64>();
     tracing::debug!("get logs directory size success");
     Ok(logs_dir_size)
+}
+
+/// Translate the labels of the system tray menu
+///
+/// The tray is rendered by the operating system and cannot read the frontend locale
+/// files, so the frontend passes the already translated labels in. It calls this once
+/// on startup and again on every language change.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command(async)]
+#[specta::specta]
+pub fn update_tray_menu_labels(
+    tray_menu_items: State<TrayMenuItems>,
+    show_window: String,
+    quit: String,
+) -> CommandResult<()> {
+    tray_menu_items
+        .show
+        .set_text(&show_window)
+        .context("Failed to set the text of the show window item")
+        .map_err(|err| CommandError::from("Failed to update the tray menu labels", err))?;
+
+    tray_menu_items
+        .quit
+        .set_text(&quit)
+        .context("Failed to set the text of the quit item")
+        .map_err(|err| CommandError::from("Failed to update the tray menu labels", err))?;
+
+    tracing::debug!("Updated the tray menu labels successfully");
+    Ok(())
 }
 
 #[allow(clippy::needless_pass_by_value)]

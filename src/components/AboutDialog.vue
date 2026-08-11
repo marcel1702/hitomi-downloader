@@ -48,7 +48,7 @@ onMounted(async () => {
             <n-a href="https://github.com/lanyeeee" target="_blank">lanyeeee</n-a>
           </div>
           <div>
-            Released under
+            {{ t('about_dialog.released_under') }}
             <n-a href="https://github.com/lanyeeee/hitomi-downloader/blob/main/LICENSE" target="_blank">
               MIT License
             </n-a>

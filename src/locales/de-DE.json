@@ -1,0 +1,137 @@
+{
+  "name": "Deutsch",
+  "common": {
+    "artist": "Künstler",
+    "group": "Gruppe",
+    "series": "Serie",
+    "character": "Charakter",
+    "type": "Typ",
+    "language": "Sprache",
+    "tag": "Tag",
+    "open_directory": "Ordner öffnen",
+    "export_pdf": "Als PDF exportieren",
+    "export_cbz": "Als CBZ exportieren",
+    "download_directory": "Download-Ordner",
+    "export_directory": "Export-Ordner",
+    "select_all": "Alle auswählen",
+    "continue": "Fortsetzen",
+    "pause": "Pausieren",
+    "cancel": "Abbrechen"
+  },
+  "app_content": {
+    "save_config_success": "Einstellungen gespeichert",
+    "logs_directory_size_too_big": "Log-Ordner überschreitet 50 MB",
+    "log_cleanup_reminder": "Bitte räume die Log-Dateien bald auf",
+    "click_top_center": "Klicke oben in der Mitte auf",
+    "there_is": "Dort findest du",
+    "you_can_also_uncheck": "Du kannst auch das Häkchen entfernen bei",
+    "this_will_disable_file_logging": "Damit wird nicht mehr in Dateien protokolliert"
+  },
+  "log_viewer": {
+    "name": "Log",
+    "logs_directory_size": "Größe des Log-Ordners",
+    "search_placeholder": "Logs durchsuchen …",
+    "open_logs_directory": "Log-Ordner öffnen",
+    "enable_file_logging": "In Datei protokollieren",
+    "clear_log_viewer": "Log-Ansicht leeren"
+  },
+  "about_dialog": {
+    "name": "Über",
+    "support_message": "Gefällt dir das Projekt? Über einen {github}-Stern⭐ freut es sich!",
+    "motivation_message": "Deine Unterstützung motiviert mich, weiter zu entwickeln und zu pflegen🙏",
+    "software_version": "Version",
+    "source_code_repository": "Quellcode",
+    "feedback": "Rückmeldung",
+    "released_under": "Veröffentlicht unter"
+  },
+  "settings_dialog": {
+    "name": "Einstellungen",
+    "download_format": "Download-Format",
+    "avif_warning": "Export als PDF nicht möglich",
+    "proxy_mode": "Proxy-Modus",
+    "system_proxy": "System",
+    "no_proxy": "Kein Proxy",
+    "custom_proxy": "Benutzerdefiniert",
+    "open_config_directory": "Konfigurationsordner öffnen",
+    "directory_format": {
+      "name": "Ordnerformat",
+      "directory_level_tips": "Trenne Ordnerebenen mit dem Schrägstrich {slash}",
+      "available_fields": "Verfügbare Felder",
+      "id": "Comic-ID",
+      "title": "Comic-Titel",
+      "type": "Comic-Typ (z. B. doujinshi, manga, imageset)",
+      "artists": "Urheber des Comics",
+      "language": "Name der Sprache",
+      "language_localname": "Sprachname in der Landessprache",
+      "for_example": "Zum Beispiel",
+      "directory_result": "Der Download von Comic 2829145 legt 3 verschachtelte Ordner an:"
+    }
+  },
+  "search_pane": {
+    "name": "Suche",
+    "search_by_query": "Suchbegriffe",
+    "search_by_id": "Comic-ID (Link geht auch)",
+    "searching": "Suche läuft …",
+    "searching_warning": "Es läuft bereits eine Suche, bitte versuche es gleich noch einmal",
+    "search_success": "Suche abgeschlossen",
+    "comic_id_invalid": "Ungültiges Format der Comic-ID",
+    "enter_comic_id_or_url": "Bitte gib eine Comic-ID oder URL ein",
+    "download_all": "Alle herunterladen",
+    "download_all_started": "{count} Comics werden zum Download eingereiht …",
+    "download_all_queued": "{count} Comics zum Download eingereiht",
+    "download_all_failed": "Downloads konnten nicht eingereiht werden"
+  },
+  "downloaded_pane": {
+    "name": "Lokal",
+    "empty_description": "Bitte lade zuerst Comics herunter",
+    "pdf_exporting": "PDF wird exportiert",
+    "pdf_export_error": "PDF-Export fehlgeschlagen",
+    "pdf_exported": "PDF exportiert",
+    "cbz_exporting": "CBZ wird exportiert",
+    "cbz_export_error": "CBZ-Export fehlgeschlagen",
+    "cbz_exported": "CBZ exportiert",
+    "export_all_cbz": "Alle als CBZ exportieren",
+    "export_all_pdf": "Alle als PDF exportieren",
+    "export_all_cbz_started": "{count} Comics werden als CBZ exportiert …",
+    "export_all_pdf_started": "{count} Comics werden als PDF exportiert …"
+  },
+  "comic_pane": {
+    "name": "Comic",
+    "other_language": "Andere Sprachen",
+    "empty_description": "Bitte wähle einen Comic aus (@:search_pane.name @:downloaded_pane.name)",
+    "related": "Ähnliche Comics",
+    "read": "Lesen"
+  },
+  "reader_pane": {
+    "name": "Leser",
+    "toggle_mode": "Ansicht wechseln (M)",
+    "fit_width": "Breite anpassen (F)",
+    "thumbnails": "Vorschaubilder (T)"
+  },
+  "downloading_pane": {
+    "name": "Downloads",
+    "pending": "Wartet",
+    "downloading": "Lädt",
+    "paused": "Pausiert",
+    "cancelled": "Abgebrochen",
+    "completed": "Fertig",
+    "failed": "Fehlgeschlagen",
+    "download_speed": "Download-Geschwindigkeit"
+  },
+  "uncompleted_progresses": {
+    "name": "Läuft",
+    "usage_tips": "Mit gedrückter linker Maustaste auswählen, Rechtsklick für das Menü, Doppelklick zum Pausieren/Fortsetzen"
+  },
+  "completed_progresses": {
+    "name": "Abgeschlossen"
+  },
+  "download_button": {
+    "quick_download": "Herunterladen",
+    "resume_download": "Fortsetzen",
+    "download_again": "Erneut laden"
+  },
+  "tray": {
+    "show_window": "Fenster anzeigen",
+    "quit": "Beenden"
+  }
+}

@@ -3,29 +3,30 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import 'virtual:uno.css'
 import { createI18n } from 'vue-i18n'
-import { locales } from './locales'
+import { DEFAULT_LOCALE, locales, resolveLocale } from './locales'
+import type { MessageSchema, SupportedLocales } from './locales'
 
-export type SupportedLocales = keyof typeof locales
-export type MessageSchema = (typeof locales)['zh-CN']
+export type { MessageSchema, SupportedLocales }
 
-/** 创建并配置 Vue I18n 实例，用于国际化 */
+/** Create and configure the Vue I18n instance used for translations */
 export const i18n = createI18n<[MessageSchema], SupportedLocales>({
-  // 如果浏览器的语言在支持的语言列表中，则使用浏览器语言，否则回退到英语 ('en-US')
-  locale: navigator.language in locales ? navigator.language : 'en-US',
-  // 缺省语言设为英语
-  fallbackLocale: 'en-US',
-  // 允许在全局组件中直接使用 $t 等 i18n 属性和方法
+  // Provisional until the saved language is read from the config on startup,
+  // so a fresh install opens in the language of the system where one fits
+  locale: resolveLocale(navigator.language),
+  // Fall back to English for anything a locale does not define
+  fallbackLocale: DEFAULT_LOCALE,
+  // Allow using $t and the other i18n properties directly in components
   globalInjection: true,
-  // 禁用 legacy 模式以支持 Vue 3 的 Composition API
+  // Disable legacy mode so the Vue 3 Composition API can be used
   legacy: false,
-  // 导入的语言包数据
+  // The imported language packs
   messages: locales,
 })
 
-// 创建 Pinia 实例，用于 Vue 的状态管理
+// Pinia instance for Vue state management
 const pinia = createPinia()
-// 创建 Vue 应用实例
+// The Vue application instance
 const app = createApp(App)
 
-// 使用 Pinia、I18n 并将应用挂载到 '#app' 的 DOM 节点上
+// Use Pinia and I18n, then mount the app on the '#app' DOM node
 app.use(pinia).use(i18n).mount('#app')

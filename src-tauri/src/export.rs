@@ -102,7 +102,7 @@ pub fn cbz(app: &AppHandle, comic: &Comic) -> anyhow::Result<()> {
     } else {
         // The comic was downloaded before the cbz format was introduced,
         // so its loose pages have to be packed into an archive
-        let comic_info = ComicInfo::from_comic(app, comic);
+        let comic_info = ComicInfo::from_comic(comic);
         let image_paths = pages::collect_dir_pages(download_dir).context(format!(
             "`{comic_title}` failed to collect the pages of `{}`",
             download_dir.display()
