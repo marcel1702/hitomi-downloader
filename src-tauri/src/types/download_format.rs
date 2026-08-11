@@ -8,8 +8,7 @@ pub enum DownloadFormat {
     Avif,
 }
 impl DownloadFormat {
-    // TODO: use `self` instead of `&self`
-    pub fn to_extension(&self) -> &str {
+    pub fn to_extension(self) -> &'static str {
         match self {
             DownloadFormat::Webp => "webp",
             DownloadFormat::Avif => "avif",

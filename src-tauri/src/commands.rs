@@ -172,14 +172,22 @@ pub async fn download_comics_by_ids(
         let comic = match hitomi_client.get_comic(*id).await {
             Ok(comic) => comic,
             Err(err) => {
-                let err_title = format!("Failed to get comic info for ID `{id}`, skipping ({}/{})", i + 1, total);
+                let err_title = format!(
+                    "Failed to get comic info for ID `{id}`, skipping ({}/{})",
+                    i + 1,
+                    total
+                );
                 let string_chain = err.to_string_chain();
                 tracing::error!(err_title, message = string_chain);
                 continue;
             }
         };
         if let Err(err) = download_manager.create_download_task(comic) {
-            let err_title = format!("Failed to create download task for ID `{id}`, skipping ({}/{})", i + 1, total);
+            let err_title = format!(
+                "Failed to create download task for ID `{id}`, skipping ({}/{})",
+                i + 1,
+                total
+            );
             let string_chain = err.to_string_chain();
             tracing::error!(err_title, message = string_chain);
         }
@@ -192,10 +200,7 @@ pub async fn download_comics_by_ids(
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command(async)]
 #[specta::specta]
-pub fn pause_download_task(
-    download_manager: State<DownloadManager>,
-    id: i32,
-) -> CommandResult<()> {
+pub fn pause_download_task(download_manager: State<DownloadManager>, id: i32) -> CommandResult<()> {
     download_manager.pause_download_task(id).map_err(|err| {
         let err_msg = format!("Failed to pause download task with ID `{id}`");
         CommandError::from(&err_msg, err)
