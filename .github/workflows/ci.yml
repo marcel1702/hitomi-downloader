@@ -71,3 +71,22 @@ jobs:
 
       - name: Check
         run: cargo check --workspace --locked
+
+  server:
+    name: Server (build without GTK/WebKit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Deliberately no GTK/WebKit packages: the web version must build without them
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the server
+        run: cargo build -p hitomi-server --locked
+
+      - name: The binary links no GTK/WebKit
+        run: |
+          ! ldd target/debug/hitomi-server | grep -Ei 'gtk|webkit|soup|javascriptcore'

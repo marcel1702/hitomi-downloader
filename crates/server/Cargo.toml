@@ -1,0 +1,26 @@
+[package]
+name = "hitomi-server"
+description = "The web version of hitomi-downloader: the core behind an HTTP server"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hitomi-core.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "tracing"] }
+tower-http = { version = "0.6", features = ["fs"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+futures = { version = "0.3.31" }
+indexmap = { version = "2.9.0" }
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["util"] }
