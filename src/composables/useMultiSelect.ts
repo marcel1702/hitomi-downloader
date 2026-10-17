@@ -37,6 +37,12 @@ export function useMultiSelect() {
     selectedIds.value.add(id)
   }
 
+  // the selection area is the element that scrolls through the comic cards
+  function scrollToTop() {
+    const container = selectionAreaRef.value?.$el as HTMLElement | undefined
+    container?.scrollTo({ top: 0, behavior: 'instant' })
+  }
+
   function toggleSelection(id: number, checked: boolean) {
     const newSelectedIds = new Set(selectedIds.value)
     if (checked) {
@@ -55,5 +61,6 @@ export function useMultiSelect() {
     unselectAll,
     onContextMenu,
     toggleSelection,
+    scrollToTop,
   }
 }

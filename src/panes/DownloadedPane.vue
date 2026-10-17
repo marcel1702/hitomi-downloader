@@ -25,8 +25,6 @@ const store = useStore()
 
 const message = useMessage()
 
-const comicCardContainerRef = ref<HTMLElement>()
-
 const PAGE_SIZE = 20
 
 const downloadedComics = ref<Comic[]>([])
@@ -39,12 +37,6 @@ const currentPageComics = computed<Comic[]>(() => {
   const start = (currentPage.value - 1) * PAGE_SIZE
   const end = start + PAGE_SIZE
   return downloadedComics.value.slice(start, end)
-})
-
-watch(currentPage, () => {
-  if (comicCardContainerRef.value !== undefined) {
-    comicCardContainerRef.value.scrollTo({ top: 0, behavior: 'instant' })
-  }
 })
 
 // listen for changes in the tab and update the list of downloaded comics
@@ -183,7 +175,11 @@ async function exportAllPdf() {
   }
 }
 
-const { selectedIds, selectionAreaRef, selectableRefs, updateSelectedIds, unselectAll, onContextMenu, toggleSelection } = useMultiSelect()
+const { selectedIds, selectionAreaRef, selectableRefs, updateSelectedIds, unselectAll, onContextMenu, toggleSelection, scrollToTop } = useMultiSelect()
+
+// a new page starts at its first comic, not where the previous page was scrolled to
+watch(currentPage, scrollToTop)
+
 const { contextMenuX, contextMenuY, contextMenuShowing, contextMenuOptions, showContextMenu } = useContextMenu()
 
 watch(currentPageComics, () => {
@@ -347,7 +343,7 @@ function useContextMenu() {
         :show="contextMenuShowing"
         :on-clickoutside="() => (contextMenuShowing = false)" />
     </SelectionArea>
-    <div v-else ref="comicCardContainerRef" class="flex-1"></div>
+    <div v-else class="flex-1"></div>
 
     <n-pagination
       class="box-border p-2 pt-0 mt-auto"

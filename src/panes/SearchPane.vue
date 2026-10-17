@@ -22,7 +22,6 @@ const searchInput = ref<string>('')
 const searchInputRef = ref<InstanceType<typeof FloatLabelInput>>()
 const comicIdInput = ref<string>('')
 const currentPage = ref<number>(1)
-const comicCardContainerRef = ref<HTMLElement>()
 const {
   onSuggestionSelect,
   getSearchSuggestions,
@@ -51,15 +50,6 @@ watch(sort, async () => {
     await search(searchInput.value.trim(), 1)
   }
 })
-
-watch(
-  () => store.searchResult,
-  () => {
-    if (comicCardContainerRef.value !== undefined) {
-      comicCardContainerRef.value.scrollTo({ top: 0, behavior: 'instant' })
-    }
-  },
-)
 
 async function search(query: string, pageNum: number) {
   if (searching.value) {
@@ -262,7 +252,11 @@ function useSuggestion() {
   }
 }
 
-const { selectedIds, selectionAreaRef, selectableRefs, updateSelectedIds, unselectAll, onContextMenu, toggleSelection } = useMultiSelect()
+const { selectedIds, selectionAreaRef, selectableRefs, updateSelectedIds, unselectAll, onContextMenu, toggleSelection, scrollToTop } = useMultiSelect()
+
+// new results, from another search or another page, start at their first comic
+watch(() => store.searchResult, scrollToTop)
+
 const { contextMenuX, contextMenuY, contextMenuShowing, contextMenuOptions, showContextMenu } = useContextMenu()
 
 watch(() => store.searchResult, () => {
