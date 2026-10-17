@@ -1,9 +1,11 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
 use bytes::Bytes;
 use parking_lot::RwLock;
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::{Client, StatusCode};
 use reqwest_middleware::ClientWithMiddleware;
 use reqwest_retry::{policies::ExponentialBackoff, Jitter, RetryTransientMiddleware};
@@ -229,6 +231,30 @@ fn create_cover_client(app: &AppHandle) -> Client {
         .unwrap()
 }
 
+/// Resolves hostnames with the IPv4 addresses first
+///
+/// With local DNS the SOCKS5 target is the first address the resolver returns. reqwest hands
+/// an IPv6 address on to the proxy as a bracketed hostname, which no SOCKS5 proxy can resolve,
+/// so an IPv4 address has to come first whenever the host has one.
+struct Ipv4FirstResolver;
+
+impl Resolve for Ipv4FirstResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        Box::pin(async move {
+            let addrs = tokio::net::lookup_host((name.as_str(), 0)).await?;
+            let addrs: Addrs = Box::new(ipv4_first(addrs).into_iter());
+            Ok(addrs)
+        })
+    }
+}
+
+fn ipv4_first(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
+    let (mut ipv4_addrs, ipv6_addrs): (Vec<_>, Vec<_>) =
+        addrs.into_iter().partition(SocketAddr::is_ipv4);
+    ipv4_addrs.extend(ipv6_addrs);
+    ipv4_addrs
+}
+
 trait ClientBuilderExt {
     fn set_proxy(self, app: &AppHandle, client_name: &str) -> Self;
 }
@@ -246,7 +272,10 @@ impl ClientBuilderExt for reqwest::ClientBuilder {
             .to_url()
             .and_then(|url| Ok(reqwest::Proxy::all(url)?))
         {
-            Ok(proxy) => builder.proxy(proxy),
+            Ok(proxy) if proxy_config.remote_dns => builder.proxy(proxy),
+            Ok(proxy) => builder
+                .proxy(proxy)
+                .dns_resolver(Arc::new(Ipv4FirstResolver)),
             Err(err) => {
                 // Route through an unreachable proxy rather than connecting directly,
                 // so a broken proxy config fails loudly instead of leaking traffic
@@ -261,5 +290,40 @@ impl ClientBuilderExt for reqwest::ClientBuilder {
                 builder.proxy(blackhole)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ipv4_addresses_come_first_in_their_order() {
+        let addrs: Vec<SocketAddr> = [
+            "[2604:e880:2:14::11]:0",
+            "203.0.113.7:0",
+            "[2001:db8::1]:0",
+            "198.51.100.2:0",
+        ]
+        .iter()
+        .map(|addr| addr.parse().unwrap())
+        .collect();
+
+        let sorted: Vec<String> = ipv4_first(addrs).iter().map(ToString::to_string).collect();
+        assert_eq!(
+            sorted,
+            [
+                "203.0.113.7:0",
+                "198.51.100.2:0",
+                "[2604:e880:2:14::11]:0",
+                "[2001:db8::1]:0"
+            ]
+        );
+    }
+
+    #[test]
+    fn ipv6_only_hosts_keep_their_addresses() {
+        let addr: SocketAddr = "[2001:db8::1]:0".parse().unwrap();
+        assert_eq!(ipv4_first([addr]), [addr]);
     }
 }

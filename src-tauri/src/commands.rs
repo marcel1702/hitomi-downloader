@@ -46,14 +46,11 @@ pub fn save_config(
     hitomi_client: State<HitomiClient>,
     download_manager: State<DownloadManager>,
     config_state: State<RwLock<Config>>,
-    config: Config,
+    mut config: Config,
 ) -> CommandResult<()> {
-    if config.proxy.enabled {
-        config
-            .proxy
-            .to_url()
-            .map_err(|err| CommandError::from("invalid proxy config", err))?;
-    }
+    // An invalid proxy keeps the one in effect, the other settings are still saved
+    let (proxy, proxy_err) = config.proxy.valid_or(&config_state.read().proxy);
+    config.proxy = proxy;
     config
         .validate_concurrency()
         .map_err(|err| CommandError::from("invalid concurrency config", err))?;
@@ -98,6 +95,13 @@ pub fn save_config(
             logger::disable_file_logger()
                 .map_err(|err| CommandError::from("disable file logger failed", err))?;
         }
+    }
+
+    if let Some(err) = proxy_err {
+        return Err(CommandError::from(
+            "invalid proxy config, the other settings were saved and the previous proxy stays in use",
+            err,
+        ));
     }
 
     Ok(())

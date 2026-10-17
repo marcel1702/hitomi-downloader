@@ -20,8 +20,14 @@ const dirFmt = ref<string>(store.config?.dirFmt ?? '')
 const disableProxyFields = computed(() => store.config?.proxy.enabled !== true)
 const proxyScheme = computed(() => (store.config?.proxy.remoteDns === false ? 'socks5://' : 'socks5h://'))
 
-function commitProxyCredentials() {
+const proxyCredentialsRef = ref<HTMLElement>()
+
+function commitProxyCredentials(event?: FocusEvent) {
   if (store.config === undefined) {
+    return
+  }
+  // moving between the two fields is still typing them, a lone username is no mistake yet
+  if (event?.relatedTarget instanceof Node && proxyCredentialsRef.value?.contains(event.relatedTarget)) {
     return
   }
   // username and password are only valid together, so they are committed in one go
@@ -77,28 +83,28 @@ async function showConfigInFileManager() {
             </template>
           </n-tooltip>
         </n-radio-group>
-        <div class="flex gap-2">
-          <n-input-group>
-            <n-input-group-label size="small">{{ t('settings_dialog.comic_concurrency') }}</n-input-group-label>
-            <n-input-number
-              :value="store.config.comicConcurrency"
-              @update:value="updateComicConcurrency"
-              size="small"
-              :min="1"
-              :max="MAX_COMIC_CONCURRENCY"
-              :parse="(x: string) => parseInt(x)" />
-          </n-input-group>
-          <n-input-group>
-            <n-input-group-label size="small">{{ t('settings_dialog.img_concurrency') }}</n-input-group-label>
-            <n-input-number
-              :value="store.config.imgConcurrency"
-              @update:value="updateImgConcurrency"
-              size="small"
-              :min="1"
-              :max="MAX_IMG_CONCURRENCY"
-              :parse="(x: string) => parseInt(x)" />
-          </n-input-group>
-        </div>
+        <n-input-group>
+          <n-input-group-label size="small">{{ t('settings_dialog.comic_concurrency') }}</n-input-group-label>
+          <n-input-number
+            class="flex-1"
+            :value="store.config.comicConcurrency"
+            @update:value="updateComicConcurrency"
+            size="small"
+            :min="1"
+            :max="MAX_COMIC_CONCURRENCY"
+            :parse="(x: string) => parseInt(x)" />
+        </n-input-group>
+        <n-input-group>
+          <n-input-group-label size="small">{{ t('settings_dialog.img_concurrency') }}</n-input-group-label>
+          <n-input-number
+            class="flex-1"
+            :value="store.config.imgConcurrency"
+            @update:value="updateImgConcurrency"
+            size="small"
+            :min="1"
+            :max="MAX_IMG_CONCURRENCY"
+            :parse="(x: string) => parseInt(x)" />
+        </n-input-group>
         <div class="flex items-center gap-2">
           <span>{{ t('settings_dialog.socks5_proxy') }}</span>
           <n-switch v-model:value="store.config.proxy.enabled" size="small" />
@@ -131,26 +137,28 @@ async function showConfigInFileManager() {
             :placeholder="t('settings_dialog.proxy_port')"
             :parse="(x: string) => parseInt(x)" />
         </n-input-group>
-        <n-input-group>
-          <n-input
-            :disabled="disableProxyFields"
-            v-model:value="proxyUsername"
-            size="small"
-            :placeholder="t('settings_dialog.proxy_username')"
-            :input-props="{ autocomplete: 'off' }"
-            @blur="commitProxyCredentials"
-            @keydown.enter="commitProxyCredentials" />
-          <n-input
-            :disabled="disableProxyFields"
-            v-model:value="proxyPassword"
-            type="password"
-            show-password-on="click"
-            size="small"
-            :placeholder="t('settings_dialog.proxy_password')"
-            :input-props="{ autocomplete: 'new-password' }"
-            @blur="commitProxyCredentials"
-            @keydown.enter="commitProxyCredentials" />
-        </n-input-group>
+        <div ref="proxyCredentialsRef">
+          <n-input-group>
+            <n-input
+              :disabled="disableProxyFields"
+              v-model:value="proxyUsername"
+              size="small"
+              :placeholder="t('settings_dialog.proxy_username')"
+              :input-props="{ autocomplete: 'off' }"
+              @blur="commitProxyCredentials"
+              @keydown.enter="commitProxyCredentials()" />
+            <n-input
+              :disabled="disableProxyFields"
+              v-model:value="proxyPassword"
+              type="password"
+              show-password-on="click"
+              size="small"
+              :placeholder="t('settings_dialog.proxy_password')"
+              :input-props="{ autocomplete: 'new-password' }"
+              @blur="commitProxyCredentials"
+              @keydown.enter="commitProxyCredentials()" />
+          </n-input-group>
+        </div>
         <n-tooltip placement="top" trigger="hover" width="580">
           <i18n-t keypath="settings_dialog.directory_format.directory_level_tips" tag="div" scope="global">
             <template v-slot:slash>
