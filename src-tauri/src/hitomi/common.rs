@@ -102,12 +102,12 @@ pub struct GalleryInfo {
     pub groups: Option<Vec<Group>>,
     pub parodys: Option<Vec<Parody>>,
     pub tags: Option<Vec<Tag>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "strings_to_i32s")]
     pub related: Vec<i32>,
     #[serde(default)]
     pub languages: Vec<Language>,
     pub characters: Option<Vec<Character>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "strings_to_i32s")]
     pub scene_indexes: Vec<i32>,
     #[serde(default)]
     pub files: Vec<GalleryFiles>,
@@ -128,6 +128,30 @@ where
             "`string_to_i32` failed, value type is not `Number` or `String`",
         )),
     }
+}
+
+/// A list of numbers, which Hitomi sends as numbers or as strings, even within one gallery
+///
+/// A failure here fails the whole gallery, and with it every comic on the same search page,
+/// so `null` counts as an empty list and an entry that is no number is left out.
+fn strings_to_i32s<'de, D>(d: D) -> Result<Vec<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde_json::Value;
+    let values: Option<Vec<Value>> = serde::Deserialize::deserialize(d)?;
+
+    let numbers = values
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|value| match value {
+            Value::Number(n) => n.as_i64(),
+            Value::String(s) => s.trim().parse().ok(),
+            _ => None,
+        })
+        .filter_map(|n| i32::try_from(n).ok())
+        .collect();
+    Ok(numbers)
 }
 
 #[allow(clippy::cast_sign_loss)]
@@ -333,6 +357,43 @@ mod tests {
         let err = check_gallery_status(1, reqwest::StatusCode::INTERNAL_SERVER_ERROR).unwrap_err();
 
         assert!(err.to_string().contains("500"), "{err}");
+    }
+
+    fn gallery_info_with(related: &str, scene_indexes: &str) -> serde_json::Result<GalleryInfo> {
+        serde_json::from_str(&format!(
+            r#"{{"id": "2524092", "title": "t", "type": "manga", "date": "2023-01-01 00:00:00-05",
+                "related": {related}, "scene_indexes": {scene_indexes}}}"#
+        ))
+    }
+
+    #[test]
+    fn related_ids_are_read_as_numbers_or_strings() {
+        // the shape of gallery 2524092, which broke the search page it was on
+        let gallery = gallery_info_with(r#"["726552", "141551", 2875132]"#, "[]").unwrap();
+        assert_eq!(gallery.related, vec![726_552, 141_551, 2_875_132]);
+        assert_eq!(gallery.id, 2_524_092);
+    }
+
+    #[test]
+    fn scene_indexes_are_read_as_numbers_or_strings() {
+        let gallery = gallery_info_with("[]", r#"[0, "4", " 12 "]"#).unwrap();
+        assert_eq!(gallery.scene_indexes, vec![0, 4, 12]);
+    }
+
+    #[test]
+    fn id_lists_skip_what_is_no_id() {
+        let gallery =
+            gallery_info_with(r#"["12", "", "abc", null, 1.5, 9999999999, 34]"#, "null").unwrap();
+        assert_eq!(gallery.related, vec![12, 34]);
+        assert!(gallery.scene_indexes.is_empty());
+
+        // a missing list is an empty one, as before
+        let gallery: GalleryInfo = serde_json::from_str(
+            r#"{"id": 1, "title": "t", "type": "manga", "date": "2023-01-01 00:00:00-05"}"#,
+        )
+        .unwrap();
+        assert!(gallery.related.is_empty());
+        assert!(gallery.scene_indexes.is_empty());
     }
 
     #[test]
