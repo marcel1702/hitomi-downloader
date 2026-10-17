@@ -1,5 +1,6 @@
 use std::{
     io::{Cursor, Read},
+    sync::LazyLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -56,8 +57,8 @@ fn hash_term(term: &str) -> Vec<u8> {
 }
 
 fn sanitize(input: &str) -> String {
-    let re = Regex::new(r"[/#]").unwrap();
-    re.replace_all(input, "").to_string()
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[/#]").expect("valid regex"));
+    RE.replace_all(input, "").to_string()
 }
 
 async fn get_index_version(name: &str) -> anyhow::Result<String> {
@@ -416,5 +417,11 @@ mod tests {
             let err = nozomi_file_exists(ADDRESS, status).unwrap_err();
             assert!(err.to_string().contains(status.as_str()), "{err}");
         }
+    }
+
+    #[test]
+    fn sanitize_drops_url_separators() {
+        assert_eq!(sanitize("fate/stay night #1"), "fatestay night 1");
+        assert_eq!(sanitize("plain tag"), "plain tag");
     }
 }

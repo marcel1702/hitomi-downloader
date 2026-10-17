@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use anyhow::{anyhow, Context};
 use regex_lite::Regex;
 use serde::{Deserialize, Serialize};
@@ -6,6 +8,17 @@ use specta::Type;
 use crate::hitomi_client::HitomiClient;
 
 use super::gg::GG;
+
+/// The three hex digits of an image hash that pick its subdomain
+static RE_SUBDOMAIN_DIGITS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"/[0-9a-f]{61}([0-9a-f]{2})([0-9a-f])").expect("valid regex"));
+/// The subdomain part of an image url
+static RE_SUBDOMAIN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"//..?\.(?:gold-usergeneratedcontent\.net|hitomi\.la)/").expect("valid regex")
+});
+/// The last three characters of a hash, which make up its directory
+static RE_HASH_DIRS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^.*(..)(.)$").expect("valid regex"));
 //common.js
 pub const PROTOCOL: &str = "https:";
 pub const DOMAIN: &str = "ltn.gold-usergeneratedcontent.net";
@@ -138,9 +151,7 @@ pub async fn subdomain_from_url(
         }
     }
 
-    let re = Regex::new(r"/[0-9a-f]{61}([0-9a-f]{2})([0-9a-f])")?;
-
-    let Some(caps) = re.captures(url) else {
+    let Some(caps) = RE_SUBDOMAIN_DIGITS.captures(url) else {
         return Ok(String::new());
     };
 
@@ -166,9 +177,9 @@ pub async fn url_from_url(
     base: Option<&str>,
     dir: Option<&str>,
 ) -> anyhow::Result<String> {
-    let re = Regex::new(r"//..?\.(?:gold-usergeneratedcontent\.net|hitomi\.la)/")?;
     let subdomain = subdomain_from_url(url, base, dir).await?;
-    let res_url = re.replace(url, format!("//{subdomain}.gold-usergeneratedcontent.net/"));
+    let res_url =
+        RE_SUBDOMAIN.replace(url, format!("//{subdomain}.gold-usergeneratedcontent.net/"));
     Ok(res_url.into_owned())
 }
 
@@ -185,8 +196,9 @@ pub async fn full_path_from_hash(hash: &str) -> anyhow::Result<String> {
 }
 
 pub fn real_full_path_from_hash(hash: &str) -> anyhow::Result<String> {
-    let re = Regex::new(r"^.*(..)(.)$")?;
-    let real_full_path = re.replace(hash, format!("$2/$1/{hash}")).to_string();
+    let real_full_path = RE_HASH_DIRS
+        .replace(hash, format!("$2/$1/{hash}"))
+        .to_string();
     Ok(real_full_path)
 }
 
@@ -326,5 +338,35 @@ mod tests {
     #[test]
     fn a_reachable_gallery_passes() {
         assert!(check_gallery_status(1, reqwest::StatusCode::OK).is_ok());
+    }
+
+    #[test]
+    fn subdomain_digits_come_from_the_end_of_the_hash() {
+        let url = format!(
+            "https://a.gold-usergeneratedcontent.net/1729083600/890/{}7a3.webp",
+            "0".repeat(61)
+        );
+        let caps = RE_SUBDOMAIN_DIGITS.captures(&url).unwrap();
+        assert_eq!((&caps[1], &caps[2]), ("7a", "3"));
+    }
+
+    #[test]
+    fn subdomain_is_replaced() {
+        for url in [
+            "https://a.gold-usergeneratedcontent.net/x.webp",
+            "https://ab.hitomi.la/x.webp",
+        ] {
+            let replaced = RE_SUBDOMAIN.replace(url, "//w2.gold-usergeneratedcontent.net/");
+            assert_eq!(replaced, "https://w2.gold-usergeneratedcontent.net/x.webp");
+        }
+    }
+
+    #[test]
+    fn real_full_path_nests_the_hash_under_its_tail() {
+        let hash = format!("{}7a3", "0".repeat(61));
+        assert_eq!(
+            real_full_path_from_hash(&hash).unwrap(),
+            format!("3/7a/{hash}")
+        );
     }
 }

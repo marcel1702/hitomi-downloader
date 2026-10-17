@@ -1,7 +1,6 @@
 use anyhow::Context;
 use futures::future::try_join_all;
 use indexmap::IndexSet;
-use regex_lite::Regex;
 
 use super::{get_gallery_ids_for_query, get_gallery_ids_from_nozomi};
 
@@ -62,11 +61,10 @@ pub async fn do_search(query: String, sort_by_popularity: bool) -> anyhow::Resul
 
     let mut positive_terms = Vec::new();
     let mut negative_terms = Vec::new();
-    let negative_pattern = Regex::new(r"^-")?;
 
     for term in terms {
-        if negative_pattern.is_match(&term) {
-            negative_terms.push(negative_pattern.replace(&term, "").to_string());
+        if let Some(negative_term) = term.strip_prefix('-') {
+            negative_terms.push(negative_term.to_string());
         } else if !term.is_empty() {
             positive_terms.push(term);
         }
