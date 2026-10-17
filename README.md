@@ -40,11 +40,13 @@ Download and run, no installation of a runtime required.
 1. Search for keywords in the `Search` tab, or paste a comic id or gallery link.
 2. Hit `Download` on the comic card, or open the `Comic` tab through the cover for more detail
    and download from there.
-3. Watch the progress in the `Downloads` tab.
+3. Watch the progress under `Downloading` on the right; finished comics move to `Completed`.
 4. Once finished, the comic shows up under `Local`, where `Open Folder` takes you to the
-   archive and `Read` opens it in the built-in reader.
+   archive. Click the cover to open it in the `Comic` tab, where `Read` opens it in the
+   built-in reader.
 
-Exporting to PDF or CBZ is also done from the `Local` tab, through the right-click menu.
+Exporting to PDF or CBZ is also done from the `Local` tab, through the buttons on each comic,
+the right-click menu, or `Export All` for the whole library.
 
 📹 The video below walks through the whole flow. **It is safe for work.**
 
