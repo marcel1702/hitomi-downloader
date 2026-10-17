@@ -4,6 +4,7 @@ import type { TabsInst } from 'naive-ui'
 import { useMessage, useNotification } from 'naive-ui'
 import { commands } from './bindings.ts'
 import { isWeb } from './platform.ts'
+import { logOut } from './web/session.ts'
 import { useStore } from './store.ts'
 import LogViewer from './components/LogViewer.vue'
 import { useI18n } from './utils.ts'
@@ -13,7 +14,7 @@ import DownloadedPane from './panes/DownloadedPane.vue'
 import ComicPane from './panes/ComicPane.vue'
 import ReaderPane from './panes/ReaderPane.vue'
 import DownloadingPane from './panes/DownloadingPane.vue'
-import { PhClockCounterClockwise, PhInfo, PhTranslate } from '@phosphor-icons/vue'
+import { PhClockCounterClockwise, PhInfo, PhSignOut, PhTranslate } from '@phosphor-icons/vue'
 import { locales, resolveLocale } from './locales'
 
 const { t, locale } = useI18n()
@@ -165,6 +166,15 @@ onMounted(async () => {
               </n-icon>
             </template>
             {{ t('about_dialog.name') }}
+          </n-button>
+          <!-- the web version sits behind a login, the desktop app does not -->
+          <n-button v-if="isWeb" size="small" quaternary @click="logOut">
+            <template #icon>
+              <n-icon size="20">
+                <PhSignOut />
+              </n-icon>
+            </template>
+            {{ t('app_content.log_out') }}
           </n-button>
           <div class="ml-auto flex items-center gap-1">
             <n-icon size="22">

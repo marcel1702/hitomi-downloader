@@ -28,7 +28,8 @@
     "click_top_center": "Click the top-center",
     "there_is": "There is",
     "you_can_also_uncheck": "You can uncheck",
-    "this_will_disable_file_logging": "This will stop file logging"
+    "this_will_disable_file_logging": "This will stop file logging",
+    "log_out": "Log out"
   },
   "log_viewer": {
     "name": "Log",

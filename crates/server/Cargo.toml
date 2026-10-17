@@ -21,6 +21,11 @@ tower-http = { version = "0.6", features = ["fs"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 futures = { version = "0.3.31" }
 indexmap = { version = "2.9.0" }
+argon2 = { version = "0.5", features = ["std"] }
+subtle = "2"
+sha2 = "0.10"
+rand = "0.10"
+rpassword = "7"
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

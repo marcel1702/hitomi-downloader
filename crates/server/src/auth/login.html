@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>hitomi-downloader</title>
+    <style>
+      :root {
+        --bg: #f5f6f8;
+        --card: #ffffff;
+        --text: #1f2225;
+        --muted: #6b7076;
+        --border: #dfe1e5;
+        --accent: #5d6fc0;
+        --error: #d03050;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #18191b;
+          --card: #232427;
+          --text: #e6e7e9;
+          --muted: #9a9ea4;
+          --border: #3a3c40;
+          --accent: #8a9be0;
+          --error: #e88080;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+      main {
+        width: 100%;
+        max-width: 360px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 28px 24px;
+      }
+      h1 {
+        margin: 0 0 20px;
+        font-size: 20px;
+        font-weight: 600;
+      }
+      form,
+      .methods {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      input {
+        font: inherit;
+        color: var(--text);
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 8px 10px;
+      }
+      input:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: -1px;
+      }
+      button,
+      .redirect {
+        font: inherit;
+        border: 0;
+        border-radius: 4px;
+        padding: 9px 12px;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+        text-align: center;
+        text-decoration: none;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      .error {
+        min-height: 1.5em;
+        margin: 0;
+        color: var(--error);
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>hitomi-downloader</h1>
+      <div class="methods" id="methods"></div>
+      <p class="error" id="error" role="alert"></p>
+    </main>
+    <script>
+      const texts = {
+        en: {
+          username: 'User name',
+          password: 'Password',
+          login: 'Log in',
+          failed: 'Login failed',
+          unavailable: 'The server cannot be reached',
+        },
+        de: {
+          username: 'Benutzername',
+          password: 'Passwort',
+          login: 'Anmelden',
+          failed: 'Anmeldung fehlgeschlagen',
+          unavailable: 'Der Server ist nicht erreichbar',
+        },
+      }
+      const lang = navigator.language.toLowerCase().startsWith('de') ? 'de' : 'en'
+      const t = texts[lang]
+      document.documentElement.lang = lang
+
+      // only a path on this server, never `//host` or `/\host`, which a browser reads as another site
+      const requested = new URLSearchParams(location.search).get('next')
+      const next = requested && /^\/(?![/\\])/.test(requested) ? requested : '/'
+
+      const methods = document.getElementById('methods')
+      const error = document.getElementById('error')
+
+      function passwordForm() {
+        const form = document.createElement('form')
+        form.innerHTML = `
+          <label>${t.username}<input name="username" autocomplete="username" required autofocus></label>
+          <label>${t.password}<input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit">${t.login}</button>`
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault()
+          const button = form.querySelector('button')
+          button.disabled = true
+          error.textContent = ''
+          try {
+            const response = await fetch('/auth/login', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ username: form.username.value, password: form.password.value }),
+            })
+            if (response.ok) {
+              location.replace(next)
+              return
+            }
+            const body = await response.json().catch(() => ({}))
+            error.textContent = body.err_message || t.failed
+            form.password.value = ''
+            form.password.focus()
+          } catch {
+            error.textContent = t.unavailable
+          } finally {
+            button.disabled = false
+          }
+        })
+        return form
+      }
+
+      function redirectButton(method) {
+        const link = document.createElement('a')
+        link.className = 'redirect'
+        link.textContent = method.label
+        link.href = `${method.url}?next=${encodeURIComponent(next)}`
+        return link
+      }
+
+      fetch('/auth/methods', { credentials: 'same-origin' })
+        .then((response) => response.json())
+        .then((list) => {
+          for (const method of list) {
+            if (method.kind === 'password') methods.append(passwordForm())
+            if (method.kind === 'redirect') methods.append(redirectButton(method))
+          }
+        })
+        .catch(() => {
+          error.textContent = t.unavailable
+        })
+    </script>
+  </body>
+</html>
