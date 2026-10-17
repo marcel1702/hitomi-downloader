@@ -13,7 +13,7 @@ use crate::{
     config::Config,
     extensions::AnyhowErrorToStringChain,
     hitomi::{self, Suggestion},
-    types::{Comic, ProxyMode, SearchResult},
+    types::{Comic, SearchResult},
     utils::get_app_handle,
 };
 
@@ -197,27 +197,30 @@ trait ClientBuilderExt {
 
 impl ClientBuilderExt for reqwest::ClientBuilder {
     fn set_proxy(self, app: &AppHandle, client_name: &str) -> reqwest::ClientBuilder {
-        let proxy_mode = app.state::<RwLock<Config>>().read().proxy_mode;
-        match proxy_mode {
-            ProxyMode::System => self,
-            ProxyMode::NoProxy => self.no_proxy(),
-            ProxyMode::Custom => {
-                let config = app.state::<RwLock<Config>>();
-                let config = config.read();
-                let proxy_host = &config.proxy_host;
-                let proxy_port = &config.proxy_port;
-                let proxy_url = format!("http://{proxy_host}:{proxy_port}");
+        let proxy_config = app.state::<RwLock<Config>>().read().proxy.clone();
+        // never pick up a proxy from the environment or the OS settings
+        let builder = self.no_proxy();
+        if !proxy_config.enabled {
+            return builder;
+        }
 
-                match reqwest::Proxy::all(&proxy_url).map_err(anyhow::Error::from) {
-                    Ok(proxy) => self.proxy(proxy),
-                    Err(err) => {
-                        let err_title =
-                            format!("{client_name} failed to set proxy `{proxy_url}`, use system proxy instead");
-                        let string_chain = err.to_string_chain();
-                        tracing::error!(err_title, message = string_chain);
-                        self
-                    }
-                }
+        match proxy_config
+            .to_url()
+            .and_then(|url| Ok(reqwest::Proxy::all(url)?))
+        {
+            Ok(proxy) => builder.proxy(proxy),
+            Err(err) => {
+                // Route through an unreachable proxy rather than connecting directly,
+                // so a broken proxy config fails loudly instead of leaking traffic
+                let err_title = format!(
+                    "{client_name} failed to set SOCKS5 proxy `{}:{}`, all requests will fail",
+                    proxy_config.host, proxy_config.port
+                );
+                let string_chain = err.to_string_chain();
+                tracing::error!(err_title, message = string_chain);
+                let blackhole = reqwest::Proxy::all("socks5h://127.0.0.1:0")
+                    .expect("static proxy url is valid");
+                builder.proxy(blackhole)
             }
         }
     }

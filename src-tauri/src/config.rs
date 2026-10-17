@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Manager};
 
-use crate::types::{DownloadFormat, ProxyMode};
+use crate::types::{DownloadFormat, ProxyConfig};
 
 /// The languages the interface ships translations for
 ///
@@ -22,9 +22,7 @@ pub struct Config {
     pub enable_file_logger: bool,
     pub download_format: DownloadFormat,
     pub dir_fmt: String,
-    pub proxy_host: String,
-    pub proxy_mode: ProxyMode,
-    pub proxy_port: u16,
+    pub proxy: ProxyConfig,
     pub language: String,
 }
 
@@ -92,10 +90,37 @@ impl Config {
             enable_file_logger: true,
             download_format: DownloadFormat::Webp,
             dir_fmt: "{title} - {id}".to_string(),
-            proxy_mode: ProxyMode::System,
-            proxy_host: "127.0.0.1".to_string(),
-            proxy_port: 7890,
+            proxy: ProxyConfig::default(),
             language: DEFAULT_LANGUAGE.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_with_legacy_proxy_fields_keeps_other_settings() {
+        let legacy = r#"{
+            "downloadDir": "/comics",
+            "exportDir": "/exports",
+            "enableFileLogger": false,
+            "downloadFormat": "Avif",
+            "dirFmt": "{id}",
+            "proxyHost": "127.0.0.1",
+            "proxyMode": "Custom",
+            "proxyPort": 7890,
+            "language": "de-DE"
+        }"#;
+        let config = Config::merge_config(legacy, Path::new("/app-data"));
+        assert_eq!(config.download_dir, PathBuf::from("/comics"));
+        assert_eq!(config.download_format, DownloadFormat::Avif);
+        assert_eq!(config.dir_fmt, "{id}");
+        assert_eq!(config.language, "de-DE");
+        assert_eq!(config.proxy, ProxyConfig::default());
+
+        let saved = serde_json::to_value(&config).unwrap();
+        assert!(saved.get("proxyMode").is_none());
     }
 }
