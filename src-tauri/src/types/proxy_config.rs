@@ -33,6 +33,20 @@ impl Default for ProxyConfig {
 }
 
 impl ProxyConfig {
+    /// These settings if they are valid, otherwise `current` together with the reason
+    ///
+    /// Lets a save keep the proxy in effect instead of failing as a whole, so the settings
+    /// changed alongside an invalid proxy are not lost.
+    pub fn valid_or(self, current: &ProxyConfig) -> (ProxyConfig, Option<anyhow::Error>) {
+        if !self.enabled {
+            return (self, None);
+        }
+        match self.to_url() {
+            Ok(_) => (self, None),
+            Err(err) => (current.clone(), Some(err)),
+        }
+    }
+
     /// Build the proxy URL, with the credentials percent-encoded into its userinfo
     pub fn to_url(&self) -> anyhow::Result<Url> {
         let host = self.host.trim();
@@ -121,6 +135,45 @@ mod tests {
             ..ProxyConfig::default()
         };
         assert_eq!(config.to_url().unwrap().as_str(), "socks5h://[::1]:1080");
+    }
+
+    #[test]
+    fn invalid_proxy_keeps_the_current_one() {
+        let current = ProxyConfig {
+            enabled: true,
+            port: 9050,
+            ..ProxyConfig::default()
+        };
+        let invalid = ProxyConfig {
+            enabled: true,
+            host: "bad host".to_string(),
+            ..ProxyConfig::default()
+        };
+        let (applied, err) = invalid.valid_or(&current);
+        assert_eq!(applied, current);
+        assert!(err.is_some());
+    }
+
+    #[test]
+    fn valid_or_disabled_proxy_is_taken_over() {
+        let current = ProxyConfig::default();
+        let valid = ProxyConfig {
+            enabled: true,
+            port: 9050,
+            ..ProxyConfig::default()
+        };
+        let (applied, err) = valid.clone().valid_or(&current);
+        assert_eq!(applied, valid);
+        assert!(err.is_none());
+
+        // the fields of a disabled proxy are never used, so they are kept as typed
+        let disabled = ProxyConfig {
+            host: "bad host".to_string(),
+            ..ProxyConfig::default()
+        };
+        let (applied, err) = disabled.clone().valid_or(&current);
+        assert_eq!(applied, disabled);
+        assert!(err.is_none());
     }
 
     #[test]
