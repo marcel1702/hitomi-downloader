@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _};
 use bytes::Bytes;
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -50,7 +51,8 @@ pub struct DownloadManager {
     comic_limit: Arc<AtomicU32>,
     img_limit: Arc<AtomicU32>,
     byte_per_sec: Arc<AtomicU64>,
-    download_tasks: Arc<RwLock<HashMap<i32, DownloadTask>>>,
+    /// In the order the tasks were created, which is the order the frontend lists them in
+    download_tasks: Arc<RwLock<IndexMap<i32, DownloadTask>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -76,7 +78,7 @@ impl DownloadManager {
             comic_limit: Arc::new(AtomicU32::new(comic_concurrency)),
             img_limit: Arc::new(AtomicU32::new(img_concurrency)),
             byte_per_sec: Arc::new(AtomicU64::new(0)),
-            download_tasks: Arc::new(RwLock::new(HashMap::new())),
+            download_tasks: Arc::new(RwLock::new(IndexMap::new())),
         };
 
         context.spawn(manager.clone().emit_download_speed_loop());
@@ -143,6 +145,19 @@ impl DownloadManager {
         };
         task.set_state(DownloadTaskState::Cancelled);
         Ok(())
+    }
+
+    /// A `Create` event for every task, carrying its current state and progress
+    ///
+    /// Lets a frontend that connects later, a second browser above all, list the downloads
+    /// that started before it. Replaying them is harmless for a frontend that already has
+    /// them, a `Create` replaces the entry of its comic.
+    pub fn task_snapshots(&self) -> Vec<DownloadTaskEvent> {
+        self.download_tasks
+            .read()
+            .values()
+            .map(DownloadTask::create_event)
+            .collect()
     }
 
     /// Change how many comics and images may download at the same time
@@ -561,12 +576,16 @@ impl DownloadTask {
     }
 
     fn emit_download_task_create_event(&self) {
-        self.context.emit(DownloadTaskEvent::Create {
+        self.context.emit(self.create_event());
+    }
+
+    fn create_event(&self) -> DownloadTaskEvent {
+        DownloadTaskEvent::Create {
             state: *self.state_sender.borrow(),
             comic: Box::new(self.comic.as_ref().clone()),
             downloaded_img_count: self.downloaded_img_count.load(Ordering::Relaxed),
             total_img_count: self.total_img_count.load(Ordering::Relaxed),
-        });
+        }
     }
 
     #[allow(clippy::needless_pass_by_value)]
