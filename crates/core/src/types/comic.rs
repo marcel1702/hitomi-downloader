@@ -1,14 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
-use parking_lot::RwLock;
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager};
 use walkdir::WalkDir;
 
 use crate::{
-    config::Config,
+    context::Context,
     hitomi::{url_from_url_from_hash, GalleryFiles, GalleryInfo},
 };
 
@@ -42,7 +40,7 @@ pub struct Comic {
 
 impl Comic {
     pub async fn from_gallery_info(
-        app: &AppHandle,
+        context: &Context,
         gallery_info: GalleryInfo,
     ) -> anyhow::Result<Comic> {
         let first_file = gallery_info
@@ -130,7 +128,7 @@ impl Comic {
             comic_download_dir: None,
         };
 
-        comic.update_fields(app).context(format!(
+        comic.update_fields(context).context(format!(
             "Failed to update fields for comic `{}`",
             comic.title
         ))?;
@@ -162,8 +160,8 @@ impl Comic {
     /// Update fields and logic:
     /// - `comic_download_dir`: Update to the directory where the metadata file is located by matching the current comic id
     /// - `is_downloaded`: Set to true if the corresponding comic metadata is found
-    pub fn update_fields(&mut self, app: &AppHandle) -> anyhow::Result<()> {
-        let download_dir = app.state::<RwLock<Config>>().read().download_dir.clone();
+    pub fn update_fields(&mut self, context: &Context) -> anyhow::Result<()> {
+        let download_dir = context.config().read().download_dir.clone();
         if !download_dir.exists() {
             return Ok(());
         }
@@ -236,10 +234,9 @@ impl Comic {
         Ok(comic_download_dir_name)
     }
 
-    pub fn get_comic_export_dir(&self, app: &AppHandle) -> anyhow::Result<PathBuf> {
+    pub fn get_comic_export_dir(&self, context: &Context) -> anyhow::Result<PathBuf> {
         let (download_dir, export_dir) = {
-            let config = app.state::<RwLock<Config>>();
-            let config = config.read();
+            let config = context.config().read();
             (config.download_dir.clone(), config.export_dir.clone())
         };
 

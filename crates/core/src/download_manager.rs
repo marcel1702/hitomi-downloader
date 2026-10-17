@@ -10,21 +10,19 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context as _};
 use bytes::Bytes;
 use parking_lot::RwLock;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager};
-use tauri_specta::Event;
 use tokio::{
     sync::{watch, Semaphore, SemaphorePermit},
     task::JoinSet,
 };
 
 use crate::{
-    config::Config,
+    context::Context,
     events::{DownloadSpeedEvent, DownloadTaskEvent},
     extensions::AnyhowErrorToStringChain,
     hitomi::{image_url_from_image, invalidate_gg, Ext, GalleryFiles},
@@ -40,11 +38,11 @@ use crate::{
 /// You can safely clone and use it in multiple threads.
 ///
 /// Specifically:
-/// - `app` is of type `AppHandle`, according to the `Tauri` documentation, the overhead of cloning it is minimal.
+/// - `context` is a [`Context`], cloning it only increases a reference count.
 /// - Other fields are wrapped in `Arc`, and the cloning operation of these fields only increases the reference count.
 #[derive(Clone)]
 pub struct DownloadManager {
-    app: AppHandle,
+    context: Context,
     comic_sem: Arc<Semaphore>,
     img_sem: Arc<Semaphore>,
     /// The number of permits `comic_sem` is meant to hold, the permits it currently has
@@ -66,14 +64,13 @@ pub enum DownloadTaskState {
 }
 
 impl DownloadManager {
-    pub fn new(app: &AppHandle) -> Self {
+    pub fn new(context: &Context) -> Self {
         let (comic_concurrency, img_concurrency) = {
-            let config = app.state::<RwLock<Config>>();
-            let config = config.read();
+            let config = context.config().read();
             (config.comic_concurrency, config.img_concurrency)
         };
         let manager = DownloadManager {
-            app: app.clone(),
+            context: context.clone(),
             comic_sem: Arc::new(Semaphore::new(comic_concurrency as usize)),
             img_sem: Arc::new(Semaphore::new(img_concurrency as usize)),
             comic_limit: Arc::new(AtomicU32::new(comic_concurrency)),
@@ -82,7 +79,7 @@ impl DownloadManager {
             download_tasks: Arc::new(RwLock::new(HashMap::new())),
         };
 
-        tauri::async_runtime::spawn(manager.clone().emit_download_speed_loop());
+        context.spawn(manager.clone().emit_download_speed_loop());
 
         manager
     }
@@ -98,9 +95,9 @@ impl DownloadManager {
                 return Ok(());
             }
         }
-        let task = DownloadTask::new(self.app.clone(), comic)
+        let task = DownloadTask::new(self.context.clone(), comic)
             .context(format!("Failed to create download task with id `{id}`",))?;
-        tauri::async_runtime::spawn(task.clone().process());
+        self.context.spawn(task.clone().process());
         tasks.insert(id, task);
         Ok(())
     }
@@ -157,7 +154,7 @@ impl DownloadManager {
             resize_semaphore(&self.img_sem, &self.img_limit, img_concurrency),
         ];
         for shrink in shrinks.into_iter().flatten() {
-            tauri::async_runtime::spawn(shrink);
+            self.context.spawn(shrink);
         }
         tracing::debug!(
             comic_concurrency,
@@ -176,7 +173,7 @@ impl DownloadManager {
             let mega_byte_per_sec = byte_per_sec as f64 / 1024.0 / 1024.0;
             let speed = format!("{mega_byte_per_sec:.2} MB/s");
 
-            let _ = DownloadSpeedEvent { speed }.emit(&self.app);
+            self.context.emit(DownloadSpeedEvent { speed });
         }
     }
 }
@@ -210,7 +207,7 @@ fn resize_semaphore(
 
 #[derive(Clone)]
 struct DownloadTask {
-    app: AppHandle,
+    context: Context,
     download_manager: DownloadManager,
     comic: Arc<Comic>,
     state_sender: watch::Sender<DownloadTaskState>,
@@ -220,18 +217,20 @@ struct DownloadTask {
 }
 
 impl DownloadTask {
-    pub fn new(app: AppHandle, mut comic: Comic) -> anyhow::Result<Self> {
-        comic.update_dir_name_fields_by_fmt(&app).context(format!(
-            "Failed to update directory name fields by fmt of `{}`",
-            comic.title
-        ))?;
+    pub fn new(context: Context, mut comic: Comic) -> anyhow::Result<Self> {
+        comic
+            .update_dir_name_fields_by_fmt(&context)
+            .context(format!(
+                "Failed to update directory name fields by fmt of `{}`",
+                comic.title
+            ))?;
 
-        let download_manager = app.state::<DownloadManager>().inner().clone();
+        let download_manager = context.download_manager().clone();
         let (state_sender, _) = watch::channel(DownloadTaskState::Pending);
-        let download_format = app.state::<RwLock<Config>>().read().download_format;
+        let download_format = context.config().read().download_format;
 
         let task = Self {
-            app,
+            context,
             download_manager,
             comic: Arc::new(comic),
             state_sender,
@@ -553,23 +552,21 @@ impl DownloadTask {
     }
 
     fn emit_download_task_update_event(&self) {
-        let _ = DownloadTaskEvent::Update {
+        self.context.emit(DownloadTaskEvent::Update {
             comic_id: self.comic.id,
             state: *self.state_sender.borrow(),
             downloaded_img_count: self.downloaded_img_count.load(Ordering::Relaxed),
             total_img_count: self.total_img_count.load(Ordering::Relaxed),
-        }
-        .emit(&self.app);
+        });
     }
 
     fn emit_download_task_create_event(&self) {
-        let _ = DownloadTaskEvent::Create {
+        self.context.emit(DownloadTaskEvent::Create {
             state: *self.state_sender.borrow(),
             comic: Box::new(self.comic.as_ref().clone()),
             downloaded_img_count: self.downloaded_img_count.load(Ordering::Relaxed),
             total_img_count: self.total_img_count.load(Ordering::Relaxed),
-        }
-        .emit(&self.app);
+        });
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -598,7 +595,7 @@ impl DownloadTask {
     async fn save_cover(&self, download_dir: &Path) -> anyhow::Result<()> {
         let comic_title = &self.comic.title;
         let cover_url = &self.comic.cover_url;
-        let hitomi_client = self.app.state::<HitomiClient>().inner().clone();
+        let hitomi_client = self.context.hitomi_client().clone();
 
         let cover_data = hitomi_client
             .get_cover_data(cover_url)
@@ -765,7 +762,7 @@ async fn write_img(save_path: &Path, data: &[u8]) -> anyhow::Result<()> {
 
 #[derive(Clone)]
 struct DownloadImgTask {
-    app: AppHandle,
+    context: Context,
     download_manager: DownloadManager,
     download_task: DownloadTask,
     file: GalleryFiles,
@@ -781,7 +778,7 @@ impl DownloadImgTask {
         save_path: PathBuf,
     ) -> Self {
         Self {
-            app: download_task.app.clone(),
+            context: download_task.context.clone(),
             download_manager: download_task.download_manager.clone(),
             download_task: download_task.clone(),
             file,
@@ -1006,7 +1003,7 @@ impl DownloadImgTask {
     }
 
     fn hitomi_client(&self) -> HitomiClient {
-        self.app.state::<HitomiClient>().inner().clone()
+        self.context.hitomi_client().clone()
     }
 }
 
@@ -1024,7 +1021,7 @@ pub struct DirFmtParams {
 
 impl Comic {
     /// Update the `comic_download_dir` fields based on the fmt
-    fn update_dir_name_fields_by_fmt(&mut self, app: &AppHandle) -> anyhow::Result<()> {
+    fn update_dir_name_fields_by_fmt(&mut self, context: &Context) -> anyhow::Result<()> {
         let comic_title = &self.title;
 
         let fmt_params = DirFmtParams {
@@ -1051,16 +1048,17 @@ impl Comic {
                 joined_tags
             },
         };
-        let comic_download_dir = Comic::get_comic_download_dir_by_fmt(app, &fmt_params).context(
-            format!("Failed to get download directory by fmt of `{comic_title}`"),
-        )?;
+        let comic_download_dir = Comic::get_comic_download_dir_by_fmt(context, &fmt_params)
+            .context(format!(
+                "Failed to get download directory by fmt of `{comic_title}`"
+            ))?;
         self.comic_download_dir = Some(comic_download_dir);
 
         Ok(())
     }
 
     fn get_comic_download_dir_by_fmt(
-        app: &AppHandle,
+        context: &Context,
         fmt_params: &DirFmtParams,
     ) -> anyhow::Result<PathBuf> {
         use strfmt::strfmt;
@@ -1085,8 +1083,7 @@ impl Comic {
             .collect();
 
         let (download_dir, dir_fmt) = {
-            let config = app.state::<RwLock<Config>>();
-            let config = config.read();
+            let config = context.config().read();
             (config.download_dir.clone(), config.dir_fmt.clone())
         };
 

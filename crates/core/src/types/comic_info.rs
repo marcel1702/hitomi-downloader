@@ -501,11 +501,15 @@ mod tests {
     /// once already, which is what this guards against.
     #[test]
     fn versions_are_in_step() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        // the core lives in `crates/core` of the repository
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
 
         for (label, path) in [
-            ("tauri.conf.json", root.join("tauri.conf.json")),
-            ("package.json", root.join("..").join("package.json")),
+            (
+                "tauri.conf.json",
+                root.join("src-tauri").join("tauri.conf.json"),
+            ),
+            ("package.json", root.join("package.json")),
         ] {
             let contents = std::fs::read_to_string(&path).unwrap();
             let value: serde_json::Value = serde_json::from_str(&contents).unwrap();

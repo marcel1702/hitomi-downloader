@@ -1,0 +1,57 @@
+[package]
+name = "hitomi-core"
+description = "Search, download and export for hitomi.la, shared by the desktop app and the web version"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# Lets the desktop app emit the events through tauri-specta and export them into the
+# TypeScript bindings. Without it the core does not depend on Tauri at all.
+tauri = ["dep:tauri-specta"]
+
+[dependencies]
+tauri-specta = { workspace = true, optional = true }
+
+serde.workspace = true
+serde_json.workspace = true
+yaserde = { version = "0.12.0", features = ["yaserde_derive"] }
+
+specta.workspace = true
+
+reqwest = { version = "0.12.19", default-features = false, features = ["default-tls", "socks"] }
+reqwest-retry = { version = "0.7.0" }
+reqwest-middleware = { version = "0.4.2" }
+
+anyhow.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.20", features = ["json", "time", "local-time"] }
+tracing-appender = { version = "0.2.3" }
+notify = { version = "8.0.0" }
+tokio.workspace = true
+chrono = { version = "0.4.41" }
+regex-lite = { version = "0.1.6" }
+futures = { version = "0.3.31" }
+byteorder = { version = "1.5.0" }
+sha2 = { version = "0.10.9" }
+indexmap = { version = "2.9.0" }
+strfmt = { version = "0.2.4" }
+bytes = { version = "1.11.1" }
+lopdf = { git = "https://github.com/lanyeeee/lopdf", features = ["embed_image_webp"] }
+uuid = { version = "1.16.0", features = ["v4"] }
+image = { version = "0.25.6", features = ["webp"], default-features = false }
+zip = { version = "4.0.0", default-features = false }
+walkdir = { version = "2.5.0" }
+
+# Security fix: force a minimum safe version
+rand = ">=0.9.3"
+
+# native-tls only links against openssl on Linux (Windows uses schannel,
+# macOS uses Security.framework), so this must stay platform-gated —
+# an unconditional dependency here breaks Windows builds, which don't
+# have a system OpenSSL installation.
+[target.'cfg(not(windows))'.dependencies]
+openssl = ">=0.10.80"

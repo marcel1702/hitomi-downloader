@@ -1,0 +1,31 @@
+[workspace]
+members = ["crates/core", "src-tauri"]
+resolver = "2"
+
+[workspace.package]
+# Written into the ComicInfo.xml of every download, so the desktop app and the core
+# share one version, which also has to match tauri.conf.json and package.json
+version = "1.0.0"
+authors = ["marcel1702 <https://github.com/marcel1702>"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/marcel1702/hitomi-downloader"
+
+[workspace.dependencies]
+hitomi-core = { path = "crates/core" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+specta = { version = "=2.0.0-rc.20", features = ["serde_json", "derive"] }
+tauri-specta = { version = "=2.0.0-rc.20", features = ["derive", "typescript"] }
+anyhow = { version = "1.0.98" }
+parking_lot = { version = "0.12.4", features = ["send_guard"] }
+tracing = { version = "0.1.41" }
+tokio = { version = "1.45.1", features = ["full"] }
+
+# Profiles only take effect in the workspace root
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"

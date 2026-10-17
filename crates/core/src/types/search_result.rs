@@ -1,9 +1,7 @@
-use anyhow::Context;
+use crate::{context::Context, hitomi::GalleryInfo};
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::AppHandle;
-
-use crate::hitomi::GalleryInfo;
 
 use super::Comic;
 
@@ -17,7 +15,7 @@ pub struct SearchResult {
 }
 impl SearchResult {
     pub async fn from_gallery_infos(
-        app: &AppHandle,
+        context: &Context,
         gallery_infos: Vec<GalleryInfo>,
         current_page: usize,
         total_page: usize,
@@ -25,7 +23,7 @@ impl SearchResult {
     ) -> anyhow::Result<SearchResult> {
         let from_comic_tasks = gallery_infos.into_iter().map(|gallery_info| async {
             let id = gallery_info.id;
-            Comic::from_gallery_info(app, gallery_info)
+            Comic::from_gallery_info(context, gallery_info)
                 .await
                 .context(format!("Failed to create Comic from gallery_info `{id}`"))
         });
