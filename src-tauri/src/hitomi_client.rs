@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     config::Config,
     extensions::AnyhowErrorToStringChain,
-    hitomi::{self, Suggestion},
+    hitomi::{self, GalleryInfo, Suggestion},
     types::{Comic, SearchResult, SearchSort},
     utils::get_app_handle,
 };
@@ -122,7 +122,8 @@ impl HitomiClient {
                     .await
                     .context(format!("Failed to get gallery info for `{id}`"))
             });
-        let gallery_infos = futures::future::try_join_all(get_gallery_info_tasks).await?;
+        let results = futures::future::join_all(get_gallery_info_tasks).await;
+        let gallery_infos = gallery_infos_of_page(results)?;
 
         let search_result =
             SearchResult::from_gallery_infos(&self.app, gallery_infos, page_num, total_page, ids)
@@ -181,6 +182,33 @@ impl HitomiClient {
         let cover_data = http_resp.bytes().await?;
         Ok(cover_data)
     }
+}
+
+/// The galleries of a search page that could be fetched, skipping the ones that could not
+///
+/// One removed or unreadable gallery must not hide the other comics on its page. Only when
+/// every gallery failed, which points at the connection rather than a gallery, the page fails.
+fn gallery_infos_of_page(
+    results: Vec<anyhow::Result<GalleryInfo>>,
+) -> anyhow::Result<Vec<GalleryInfo>> {
+    let (gallery_infos, errs): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+    let gallery_infos: Vec<GalleryInfo> =
+        gallery_infos.into_iter().filter_map(Result::ok).collect();
+    let mut errs = errs.into_iter().filter_map(Result::err);
+
+    if gallery_infos.is_empty() {
+        // The page fails with one error instead of one per gallery, each error is shown once
+        return match errs.next() {
+            Some(err) => Err(err),
+            None => Ok(gallery_infos),
+        };
+    }
+    for err in errs {
+        let err_title = "Failed to load a comic of the page, skipping it";
+        let string_chain = err.to_string_chain();
+        tracing::error!(err_title, message = string_chain);
+    }
+    Ok(gallery_infos)
 }
 
 fn create_api_client(app: &AppHandle) -> ClientWithMiddleware {
@@ -296,6 +324,40 @@ impl ClientBuilderExt for reqwest::ClientBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn gallery_info(id: i32) -> anyhow::Result<GalleryInfo> {
+        let json = format!(
+            r#"{{"id": {id}, "title": "t", "type": "manga", "date": "2023-01-01 00:00:00-05"}}"#
+        );
+        Ok(serde_json::from_str(&json)?)
+    }
+
+    fn ids_of(gallery_infos: &[GalleryInfo]) -> Vec<i32> {
+        gallery_infos.iter().map(|gallery| gallery.id).collect()
+    }
+
+    #[test]
+    fn a_failed_gallery_does_not_hide_the_rest_of_the_page() {
+        let results = vec![
+            gallery_info(1),
+            Err(anyhow!("Gallery `2` does not exist on Hitomi")),
+            gallery_info(3),
+        ];
+        let gallery_infos = gallery_infos_of_page(results).unwrap();
+        assert_eq!(ids_of(&gallery_infos), [1, 3]);
+    }
+
+    #[test]
+    fn a_page_where_every_gallery_failed_fails() {
+        let results = vec![Err(anyhow!("timed out 1")), Err(anyhow!("timed out 2"))];
+        let err = gallery_infos_of_page(results).unwrap_err();
+        assert_eq!(err.to_string(), "timed out 1");
+    }
+
+    #[test]
+    fn an_empty_page_is_no_failure() {
+        assert!(gallery_infos_of_page(Vec::new()).unwrap().is_empty());
+    }
 
     #[test]
     fn ipv4_addresses_come_first_in_their_order() {
