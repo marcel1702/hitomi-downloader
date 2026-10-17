@@ -6,9 +6,11 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { useStore } from '../store.ts'
 import ComicCard from '../components/ComicCard.vue'
 import { useI18n } from '../utils.ts'
-import { PhFolderOpen, PhChecks, PhFilePdf, PhFileZip } from '@phosphor-icons/vue'
+import { PhChecks, PhFilePdf, PhFileZip } from '@phosphor-icons/vue'
 import { SelectionArea } from '@viselect/vue'
 import { useMultiSelect } from '../composables/useMultiSelect.ts'
+import { useRevealPath } from '../composables/useRevealPath.ts'
+import { isWeb } from '../platform.ts'
 
 const { t } = useI18n()
 
@@ -129,8 +131,11 @@ function useProgressTracking() {
   })
 }
 
+const { revealPath, revealLabel, RevealIcon } = useRevealPath()
+
 async function selectExportDir() {
-  if (store.config === undefined) {
+  // the export dir of the web version is a volume of the server
+  if (store.config === undefined || isWeb) {
     return
   }
 
@@ -145,10 +150,7 @@ async function showExportDirInFileManager() {
   if (store.config === undefined) {
     return
   }
-  const result = await commands.showPathInFileManager(store.config.exportDir)
-  if (result.status === 'error') {
-    console.error(result.error)
-  }
+  await revealPath(store.config.exportDir)
 }
 
 async function exportAllCbz() {
@@ -287,10 +289,10 @@ function useContextMenu() {
         {{ t('common.export_directory') }}
       </n-input-group-label>
       <n-input v-model:value="store.config.exportDir" size="small" readonly @click="selectExportDir" />
-      <n-button class="w-9" size="small" @click="showExportDirInFileManager">
+      <n-button class="w-9" size="small" :title="revealLabel" @click="showExportDirInFileManager">
         <template #icon>
           <n-icon size="20">
-            <PhFolderOpen />
+            <component :is="RevealIcon" />
           </n-icon>
         </template>
       </n-button>

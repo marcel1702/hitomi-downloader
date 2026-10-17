@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useStore } from '../store.ts'
 import { commands } from '../bindings.ts'
+import { isWeb, pageUrl } from '../platform.ts'
 import { ref, watch, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { PhCaretLeft, PhCaretRight, PhList, PhRows, PhArrowsOutSimple } from '@phosphor-icons/vue'
 import { useI18n } from '../utils.ts'
@@ -48,6 +49,16 @@ function getOrFetchImage(index: number): Promise<string | undefined> {
   const promise = (async () => {
     const c = comic.value
     if (!c) return undefined
+    if (isWeb) {
+      // the server finds the page itself, from the archive or from Hitomi
+      const response = await fetch(pageUrl(c.id, index), { credentials: 'same-origin' })
+      if (response.ok) {
+        return URL.createObjectURL(await response.blob())
+      }
+      // the server reports the error as a log event, which shows it
+      imageCache.delete(index)
+      return undefined
+    }
     const file = c.files[index]
     const result = await commands.getImageData(
       c.id,

@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import type { TabsInst } from 'naive-ui'
 import { useMessage, useNotification } from 'naive-ui'
 import { commands } from './bindings.ts'
+import { isWeb } from './platform.ts'
 import { useStore } from './store.ts'
 import LogViewer from './components/LogViewer.vue'
 import { useI18n } from './utils.ts'
@@ -33,6 +34,10 @@ const searchPaneRef = ref<InstanceType<typeof SearchPane>>()
 const tabsInstRef = ref<TabsInst | null>(null)
 /** Push the tray labels to the backend, which cannot read the locale files itself */
 async function syncTrayMenuLabels() {
+  // the web version has no tray
+  if (isWeb) {
+    return
+  }
   const result = await commands.updateTrayMenuLabels(t('tray.show_window'), t('tray.quit'))
   if (result.status === 'error') {
     console.error(result.error)
