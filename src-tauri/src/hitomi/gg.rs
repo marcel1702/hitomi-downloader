@@ -105,3 +105,37 @@ impl GG {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gg_fetched_millis_ago(millis: i64) -> GG {
+        GG {
+            last_retrieval: Some(Utc::now().timestamp_millis() - millis),
+            ..GG::new()
+        }
+    }
+
+    #[test]
+    fn old_copy_is_invalidated() {
+        let mut gg = gg_fetched_millis_ago(10_000);
+        gg.invalidate();
+        assert_eq!(gg.last_retrieval, None);
+    }
+
+    #[test]
+    fn fresh_copy_survives_invalidation() {
+        // several images failing at once must not each fetch gg.js again
+        let mut gg = gg_fetched_millis_ago(1_000);
+        gg.invalidate();
+        assert!(gg.last_retrieval.is_some());
+    }
+
+    #[test]
+    fn never_fetched_stays_unfetched() {
+        let mut gg = GG::new();
+        gg.invalidate();
+        assert_eq!(gg.last_retrieval, None);
+    }
+}

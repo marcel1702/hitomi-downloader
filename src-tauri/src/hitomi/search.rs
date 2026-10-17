@@ -245,6 +245,22 @@ async fn get_gallery_ids_from_data(data: (i64, i32)) -> anyhow::Result<IndexSet<
     Ok(gallery_ids)
 }
 
+/// Check if the server delivered the nozomi file at `nozomi_address`
+///
+/// A tag nobody used has no nozomi file, which is a search without results.
+/// Any other failure must not pass for "no results", it fails the search instead.
+fn nozomi_file_exists(nozomi_address: &str, status: StatusCode) -> anyhow::Result<bool> {
+    if status == StatusCode::NOT_FOUND {
+        Ok(false)
+    } else if status == StatusCode::OK {
+        Ok(true)
+    } else {
+        Err(anyhow!(
+            "Failed to get `{nozomi_address}`, the server answered with `{status}`"
+        ))
+    }
+}
+
 pub(crate) async fn get_gallery_ids_from_nozomi(
     area: Option<&str>,
     tag: &str,
@@ -263,14 +279,8 @@ pub(crate) async fn get_gallery_ids_from_nozomi(
 
     let request = client.read().get(&nozomi_address);
     let http_resp = request.send().await?;
-    let status = http_resp.status();
-    // A tag nobody used has no nozomi file, any other failure must not pass for "no results"
-    if status == StatusCode::NOT_FOUND {
+    if !nozomi_file_exists(&nozomi_address, http_resp.status())? {
         return Ok(IndexSet::new());
-    } else if status != StatusCode::OK {
-        return Err(anyhow!(
-            "Failed to get `{nozomi_address}`, the server answered with `{status}`"
-        ));
     }
 
     let bytes = http_resp.bytes().await?;
@@ -378,4 +388,33 @@ pub async fn get_suggestions_for_query(query: &str) -> anyhow::Result<Vec<Sugges
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ADDRESS: &str = "https://example.test/tag/unknown-all.nozomi";
+
+    #[test]
+    fn unknown_tag_has_no_results() {
+        assert!(!nozomi_file_exists(ADDRESS, StatusCode::NOT_FOUND).unwrap());
+    }
+
+    #[test]
+    fn delivered_file_is_read() {
+        assert!(nozomi_file_exists(ADDRESS, StatusCode::OK).unwrap());
+    }
+
+    #[test]
+    fn server_failure_fails_the_search() {
+        for status in [
+            StatusCode::FORBIDDEN,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            let err = nozomi_file_exists(ADDRESS, status).unwrap_err();
+            assert!(err.to_string().contains(status.as_str()), "{err}");
+        }
+    }
 }

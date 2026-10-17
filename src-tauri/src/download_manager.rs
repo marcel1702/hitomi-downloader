@@ -659,6 +659,12 @@ fn img_format_of(file: &GalleryFiles, download_format: DownloadFormat) -> Downlo
     }
 }
 
+/// Check if `err` says the image is not at the url, which is what a stale `gg.js` causes
+fn is_stale_url_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<UnexpectedStatus>()
+        .is_some_and(|err| matches!(err.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND))
+}
+
 /// Path an image is written to before it is renamed to `save_path`
 ///
 /// Only a completely written image ever carries its final name, so an image cut off by a
@@ -813,10 +819,7 @@ impl DownloadImgTask {
             Err(err) => err,
         };
 
-        let url_is_stale = err
-            .downcast_ref::<UnexpectedStatus>()
-            .is_some_and(|err| matches!(err.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND));
-        if !url_is_stale {
+        if !is_stale_url_error(&err) {
             return Err(err).context(format!("Failed to download `{url}`"));
         }
 
@@ -1041,6 +1044,55 @@ mod tests {
             img_format_of(&gallery_file(1), DownloadFormat::Webp),
             DownloadFormat::Webp
         );
+    }
+
+    fn status_error(status: StatusCode) -> anyhow::Error {
+        UnexpectedStatus {
+            status,
+            body: String::new(),
+        }
+        .into()
+    }
+
+    #[test]
+    fn missing_image_counts_as_stale_url() {
+        assert!(is_stale_url_error(&status_error(StatusCode::NOT_FOUND)));
+        assert!(is_stale_url_error(&status_error(StatusCode::FORBIDDEN)));
+        // still recognised once a caller added context
+        let wrapped = status_error(StatusCode::NOT_FOUND).context("Failed to download");
+        assert!(is_stale_url_error(&wrapped));
+    }
+
+    #[test]
+    fn other_failures_are_not_retried_with_a_fresh_url() {
+        assert!(!is_stale_url_error(&status_error(
+            StatusCode::INTERNAL_SERVER_ERROR
+        )));
+        assert!(!is_stale_url_error(&status_error(
+            StatusCode::TOO_MANY_REQUESTS
+        )));
+        assert!(!is_stale_url_error(&anyhow!("connection reset")));
+    }
+
+    #[test]
+    fn mixed_formats_keep_the_page_order() {
+        let dir = std::env::temp_dir().join(format!("hitomi-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // an avif download where page 2 was only available as webp
+        for name in ["0003.avif", "0002.webp", "0001.avif"] {
+            std::fs::write(dir.join(name), b"page").unwrap();
+        }
+
+        assert_eq!(
+            pages::collect_dir_pages(&dir).unwrap(),
+            vec![
+                dir.join("0001.avif"),
+                dir.join("0002.webp"),
+                dir.join("0003.avif")
+            ]
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
