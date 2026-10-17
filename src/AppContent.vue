@@ -59,7 +59,8 @@ watch(
     }
     const result = await commands.saveConfig(store.config)
     if (result.status === 'error') {
-      message.error(() => `${t('app_content.save_config_failed')}: ${result.error.err_message}`)
+      // The backend logs the error, which the log viewer already shows as a notification
+      console.error(result.error)
       return
     }
     message.success(() => t('app_content.save_config_success'))

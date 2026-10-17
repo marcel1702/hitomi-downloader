@@ -20,7 +20,6 @@
   },
   "app_content": {
     "save_config_success": "Config saved",
-    "save_config_failed": "Failed to save config",
     "logs_directory_size_too_big": "Log folder exceeds 50MB",
     "log_cleanup_reminder": "Please clean up log files soon",
     "click_top_center": "Click the top-center",
@@ -111,7 +110,8 @@
     "other_language": "Other Languages",
     "empty_description": "Please select a comic (@:search_pane.name @:downloaded_pane.name)",
     "related": "Related Comics",
-    "read": "Read"
+    "read": "Read",
+    "no_download_dir": "No download folder is known for this comic"
   },
   "reader_pane": {
     "name": "Reader",

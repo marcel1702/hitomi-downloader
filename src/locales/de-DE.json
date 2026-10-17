@@ -20,7 +20,6 @@
   },
   "app_content": {
     "save_config_success": "Einstellungen gespeichert",
-    "save_config_failed": "Einstellungen konnten nicht gespeichert werden",
     "logs_directory_size_too_big": "Log-Ordner überschreitet 50 MB",
     "log_cleanup_reminder": "Bitte räume die Log-Dateien bald auf",
     "click_top_center": "Klicke oben in der Mitte auf",
@@ -111,7 +110,8 @@
     "other_language": "Andere Sprachen",
     "empty_description": "Bitte wähle einen Comic aus (@:search_pane.name @:downloaded_pane.name)",
     "related": "Ähnliche Comics",
-    "read": "Lesen"
+    "read": "Lesen",
+    "no_download_dir": "Für diesen Comic ist kein Download-Ordner bekannt"
   },
   "reader_pane": {
     "name": "Leser",
