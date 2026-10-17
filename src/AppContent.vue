@@ -57,7 +57,11 @@ watch(
     if (store.config === undefined) {
       return
     }
-    await commands.saveConfig(store.config)
+    const result = await commands.saveConfig(store.config)
+    if (result.status === 'error') {
+      message.error(() => `${t('app_content.save_config_failed')}: ${result.error.err_message}`)
+      return
+    }
     message.success(() => t('app_content.save_config_success'))
   },
   { deep: true },

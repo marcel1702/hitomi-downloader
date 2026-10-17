@@ -12,10 +12,29 @@ const store = useStore()
 
 const showing = defineModel<boolean>('showing', { required: true })
 
-const proxyHost = ref<string>(store.config?.proxyHost ?? '')
+const proxyHost = ref<string>(store.config?.proxy.host ?? '')
+const proxyUsername = ref<string>(store.config?.proxy.username ?? '')
+const proxyPassword = ref<string>(store.config?.proxy.password ?? '')
 const dirFmt = ref<string>(store.config?.dirFmt ?? '')
 
-const disableProxyHostAndPort = computed(() => store.config?.proxyMode !== 'Custom')
+const disableProxyFields = computed(() => store.config?.proxy.enabled !== true)
+const proxyScheme = computed(() => (store.config?.proxy.remoteDns === false ? 'socks5://' : 'socks5h://'))
+
+function commitProxyCredentials() {
+  if (store.config === undefined) {
+    return
+  }
+  // username and password are only valid together, so they are committed in one go
+  store.config.proxy.username = proxyUsername.value
+  store.config.proxy.password = proxyPassword.value
+}
+
+function updateProxyPort(port: number | null) {
+  // a cleared field has no port, keep the last one instead of saving an invalid config
+  if (store.config !== undefined && port !== null) {
+    store.config.proxy.port = port
+  }
+}
 
 async function showConfigInFileManager() {
   const configName = 'config.json'
@@ -41,28 +60,57 @@ async function showConfigInFileManager() {
             </template>
           </n-tooltip>
         </n-radio-group>
-        <n-radio-group class="flex gap-2" v-model:value="store.config.proxyMode">
-          {{ t('settings_dialog.proxy_mode') }}
-          <n-radio value="System">{{ t('settings_dialog.system_proxy') }}</n-radio>
-          <n-radio value="NoProxy">{{ t('settings_dialog.no_proxy') }}</n-radio>
-          <n-radio value="Custom">{{ t('settings_dialog.custom_proxy') }}</n-radio>
-        </n-radio-group>
+        <div class="flex items-center gap-2">
+          <span>{{ t('settings_dialog.socks5_proxy') }}</span>
+          <n-switch v-model:value="store.config.proxy.enabled" size="small" />
+          <n-tooltip placement="top" trigger="hover">
+            {{ t('settings_dialog.proxy_remote_dns_tip') }}
+            <template #trigger>
+              <n-checkbox v-model:checked="store.config.proxy.remoteDns" :disabled="disableProxyFields" size="small">
+                {{ t('settings_dialog.proxy_remote_dns') }}
+              </n-checkbox>
+            </template>
+          </n-tooltip>
+        </div>
         <n-input-group>
-          <n-input-group-label size="small">http://</n-input-group-label>
+          <n-input-group-label size="small">{{ proxyScheme }}</n-input-group-label>
           <n-input
-            :disabled="disableProxyHostAndPort"
+            :disabled="disableProxyFields"
             v-model:value="proxyHost"
             size="small"
-            placeholder=""
-            @blur="store.config.proxyHost = proxyHost"
-            @keydown.enter="store.config.proxyHost = proxyHost" />
+            :placeholder="t('settings_dialog.proxy_host')"
+            @blur="store.config.proxy.host = proxyHost"
+            @keydown.enter="store.config.proxy.host = proxyHost" />
           <n-input-group-label size="small">:</n-input-group-label>
           <n-input-number
-            :disabled="disableProxyHostAndPort"
-            v-model:value="store.config.proxyPort"
+            :disabled="disableProxyFields"
+            :value="store.config.proxy.port"
+            @update:value="updateProxyPort"
             size="small"
-            placeholder=""
+            :min="1"
+            :max="65535"
+            :placeholder="t('settings_dialog.proxy_port')"
             :parse="(x: string) => parseInt(x)" />
+        </n-input-group>
+        <n-input-group>
+          <n-input
+            :disabled="disableProxyFields"
+            v-model:value="proxyUsername"
+            size="small"
+            :placeholder="t('settings_dialog.proxy_username')"
+            :input-props="{ autocomplete: 'off' }"
+            @blur="commitProxyCredentials"
+            @keydown.enter="commitProxyCredentials" />
+          <n-input
+            :disabled="disableProxyFields"
+            v-model:value="proxyPassword"
+            type="password"
+            show-password-on="click"
+            size="small"
+            :placeholder="t('settings_dialog.proxy_password')"
+            :input-props="{ autocomplete: 'new-password' }"
+            @blur="commitProxyCredentials"
+            @keydown.enter="commitProxyCredentials" />
         </n-input-group>
         <n-tooltip placement="top" trigger="hover" width="580">
           <i18n-t keypath="settings_dialog.directory_format.directory_level_tips" tag="div" scope="global">

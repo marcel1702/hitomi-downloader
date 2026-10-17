@@ -303,9 +303,7 @@ export type Config = {
   enableFileLogger: boolean;
   downloadFormat: DownloadFormat;
   dirFmt: string;
-  proxyHost: string;
-  proxyMode: ProxyMode;
-  proxyPort: number;
+  proxy: ProxyConfig;
   language: string;
 };
 export type DownloadFormat = "Webp" | "Avif";
@@ -374,7 +372,17 @@ export type LogEvent = {
   line_number: number;
 };
 export type LogLevel = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
-export type ProxyMode = "System" | "NoProxy" | "Custom";
+export type ProxyConfig = {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  /**
+   * Let the proxy resolve hostnames (`socks5h`) so no DNS query leaves the machine directly
+   */
+  remoteDns: boolean;
+};
 export type SearchResult = {
   comics: Comic[];
   currentPage: number;

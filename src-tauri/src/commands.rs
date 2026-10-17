@@ -47,12 +47,14 @@ pub fn save_config(
     config_state: State<RwLock<Config>>,
     config: Config,
 ) -> CommandResult<()> {
-    let proxy_changed = {
-        let config_state = config_state.read();
-        config_state.proxy_mode != config.proxy_mode
-            || config_state.proxy_host != config.proxy_host
-            || config_state.proxy_port != config.proxy_port
-    };
+    if config.proxy.enabled {
+        config
+            .proxy
+            .to_url()
+            .map_err(|err| CommandError::from("invalid proxy config", err))?;
+    }
+
+    let proxy_changed = config_state.read().proxy != config.proxy;
 
     let enable_file_logger = config.enable_file_logger;
     let enable_file_logger_changed = config_state
