@@ -7,9 +7,11 @@ import UncompletedProgresses from '../components/UncompletedProgresses.vue'
 import CompletedProgresses from '../components/CompletedProgresses.vue'
 import { useStore } from '../store.ts'
 import { useI18n } from '../utils.ts'
-import { PhFolderOpen, PhGearSix } from '@phosphor-icons/vue'
+import { PhGearSix } from '@phosphor-icons/vue'
 import SettingsDialog from '../components/SettingsDialog.vue'
 import { ProgressData } from '../types.ts'
+import { useRevealPath } from '../composables/useRevealPath.ts'
+import { isWeb } from '../platform.ts'
 
 const { t, locale } = useI18n()
 const tabsInstRef = ref<TabsInst | null>(null)
@@ -135,9 +137,12 @@ async function syncComicInSearch(progressData: ProgressData) {
   Object.assign(comic, { ...result.data })
 }
 
+const { revealPath, revealLabel, RevealIcon } = useRevealPath()
+
 // Select download directory through dialog
 async function selectDownloadDir() {
-  if (store.config === undefined) {
+  // the download dir of the web version is a volume of the server
+  if (store.config === undefined || isWeb) {
     return
   }
 
@@ -152,11 +157,7 @@ async function showDownloadDirInFileManager() {
   if (store.config === undefined) {
     return
   }
-
-  const result = await commands.showPathInFileManager(store.config.downloadDir)
-  if (result.status === 'error') {
-    console.error(result.error)
-  }
+  await revealPath(store.config.downloadDir)
 }
 </script>
 
@@ -168,10 +169,10 @@ async function showDownloadDirInFileManager() {
           {{ t('common.download_directory') }}
         </n-input-group-label>
         <n-input v-model:value="store.config.downloadDir" size="small" readonly @click="selectDownloadDir" />
-        <n-button class="w-9" size="small" @click="showDownloadDirInFileManager">
+        <n-button class="w-9" size="small" :title="revealLabel" @click="showDownloadDirInFileManager">
           <template #icon>
             <n-icon size="20">
-              <PhFolderOpen />
+              <component :is="RevealIcon" />
             </n-icon>
           </template>
         </n-button>

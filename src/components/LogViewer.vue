@@ -7,6 +7,7 @@ import { path } from '@tauri-apps/api'
 import { useStore } from '../store.ts'
 import { darkTheme } from 'naive-ui'
 import { useI18n } from '../utils.ts'
+import { isWeb } from '../platform.ts'
 
 const { t } = useI18n()
 
@@ -155,7 +156,10 @@ async function showLogsDirInFileManager() {
         </n-input-group>
 
         <div class="flex flex-wrap gap-2 ml-auto items-center">
-          <n-button size="small" @click="showLogsDirInFileManager">{{ t('log_viewer.open_logs_directory') }}</n-button>
+          <!-- the logs of the web version are on the server, this viewer shows them -->
+          <n-button v-if="!isWeb" size="small" @click="showLogsDirInFileManager">
+            {{ t('log_viewer.open_logs_directory') }}
+          </n-button>
           <n-checkbox v-model:checked="store.config.enableFileLogger">
             {{ t('log_viewer.enable_file_logging') }}
           </n-checkbox>

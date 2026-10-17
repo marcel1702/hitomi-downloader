@@ -4,6 +4,7 @@ import { Comic, commands } from '../bindings.ts'
 import { useStore } from '../store.ts'
 import { useI18n } from '../utils.ts'
 import DownloadButton from './DownloadButton.vue'
+import { useRevealPath } from '../composables/useRevealPath.ts'
 
 const { t } = useI18n()
 
@@ -35,11 +36,12 @@ async function pickComic() {
   store.currentTabName = 'comic'
 }
 
+const { revealPath, revealLabel } = useRevealPath()
+
 async function showComicDownloadDirInFileManager() {
   const comicDownloadDir = props.comic.comicDownloadDir
   if (comicDownloadDir == null) return
-  const result = await commands.showPathInFileManager(comicDownloadDir)
-  if (result.status === 'error') console.error(result.error)
+  await revealPath(comicDownloadDir)
 }
 
 async function exportPdf() {
@@ -135,7 +137,7 @@ function tagNs(female: number, male: number): string {
         </div>
         <div class="flex mt-auto gap-1">
           <n-button v-if="isDownloaded" size="tiny" @click="showComicDownloadDirInFileManager">
-            {{ t('common.open_directory') }}
+            {{ revealLabel }}
           </n-button>
           <template v-if="showExport && isDownloaded">
             <n-button type="primary" class="ml-auto" size="tiny" @click="exportPdf">

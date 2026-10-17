@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { Comic, commands, Config, SearchResult } from './bindings.ts'
 import { ref } from 'vue'
 import { CurrentTabName, ProgressData } from './types.ts'
+import { coverUrl, isWeb } from './platform.ts'
 
 export const useStore = defineStore('store', () => {
   const config = ref<Config>()
@@ -12,6 +13,11 @@ export const useStore = defineStore('store', () => {
   const searchResult = ref<SearchResult>()
 
   async function loadCover(id: number, url: string, comicDownloadDir?: string | null) {
+    if (isWeb) {
+      // the server finds the cover itself, and the browser caches it
+      covers.value.set(id, coverUrl(id))
+      return
+    }
     const result = await commands.getCoverData(url, comicDownloadDir ?? null)
     if (result.status === 'error') {
       console.error(result.error)

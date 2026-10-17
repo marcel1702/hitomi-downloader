@@ -38,6 +38,9 @@ jobs:
       - name: Typecheck + build
         run: pnpm build
 
+      - name: Typecheck + build (web version)
+        run: pnpm build:web
+
   rust:
     name: Rust (fmt, clippy, check)
     runs-on: ubuntu-latest

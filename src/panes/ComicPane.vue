@@ -6,6 +6,7 @@ import { useI18n } from '../utils.ts'
 import { useMessage } from 'naive-ui'
 import DownloadButton from '../components/DownloadButton.vue'
 import ComicCard from '../components/ComicCard.vue'
+import { useRevealPath } from '../composables/useRevealPath.ts'
 
 const { t } = useI18n()
 
@@ -70,6 +71,8 @@ async function reloadRelatedComics() {
   await Promise.all(promises)
 }
 
+const { revealPath, revealLabel } = useRevealPath()
+
 async function showComicDownloadDirInFileManager() {
   if (store.pickedComic === undefined || store.config === undefined) {
     return
@@ -82,10 +85,7 @@ async function showComicDownloadDirInFileManager() {
     return
   }
 
-  const result = await commands.showPathInFileManager(comicDownloadDir)
-  if (result.status === 'error') {
-    console.error(result.error)
-  }
+  await revealPath(comicDownloadDir)
 }
 </script>
 
@@ -124,7 +124,7 @@ async function showComicDownloadDirInFileManager() {
         </div>
         <div class="flex flex-col gap-row-2">
           <n-button v-if="store.pickedComic.isDownloaded" size="small" @click="showComicDownloadDirInFileManager">
-            {{ t('common.open_directory') }}
+            {{ revealLabel }}
           </n-button>
           <n-button size="small" type="info" @click="store.currentTabName = 'reader'">
             {{ t('comic_pane.read') }}

@@ -5,6 +5,7 @@ import { computed, ref } from 'vue'
 import { path } from '@tauri-apps/api'
 import { appDataDir } from '@tauri-apps/api/path'
 import { commands } from '../bindings.ts'
+import { isWeb } from '../platform.ts'
 
 const { t } = useI18n()
 
@@ -219,7 +220,8 @@ async function showConfigInFileManager() {
             </n-input-group>
           </template>
         </n-tooltip>
-        <n-button class="ml-auto mt-2" size="small" @click="showConfigInFileManager">
+        <!-- the config of the web version is in the config volume of the server -->
+        <n-button v-if="!isWeb" class="ml-auto mt-2" size="small" @click="showConfigInFileManager">
           {{ t('settings_dialog.open_config_directory') }}
         </n-button>
       </div>

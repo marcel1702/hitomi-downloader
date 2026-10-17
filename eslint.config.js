@@ -8,6 +8,7 @@ export default defineConfig([
   {
     ignores: [
       'dist/**',
+      'dist-web/**',
       'src-tauri/**',
       'crates/**',
       'target/**',
