@@ -55,21 +55,19 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
 
       - name: Check formatting
-        working-directory: src-tauri
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Clippy
-        working-directory: src-tauri
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      # The core is built without Tauri for the web version, which has to stay warning free too
+      - name: Clippy (core without Tauri)
+        run: cargo clippy -p hitomi-core --all-targets -- -D warnings
 
       - name: Test
-        working-directory: src-tauri
-        run: cargo test --locked
+        run: cargo test --workspace --locked
 
       - name: Check
-        working-directory: src-tauri
-        run: cargo check --locked
+        run: cargo check --workspace --locked

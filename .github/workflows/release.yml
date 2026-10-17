@@ -45,8 +45,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -61,9 +59,9 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           mkdir -p release-assets
-          cp src-tauri/target/release/bundle/deb/*.deb "release-assets/hitomi-downloader_${version}_linux_amd64.deb"
-          cp src-tauri/target/release/bundle/rpm/*.rpm "release-assets/hitomi-downloader_${version}_linux_amd64.rpm"
-          tar -C src-tauri/target/release -czf "release-assets/hitomi-downloader_${version}_linux_amd64_portable.tar.gz" hitomi-downloader
+          cp target/release/bundle/deb/*.deb "release-assets/hitomi-downloader_${version}_linux_amd64.deb"
+          cp target/release/bundle/rpm/*.rpm "release-assets/hitomi-downloader_${version}_linux_amd64.rpm"
+          tar -C target/release -czf "release-assets/hitomi-downloader_${version}_linux_amd64_portable.tar.gz" hitomi-downloader
 
       - name: Package release assets (Windows, x64)
         if: matrix.os == 'windows'
@@ -71,9 +69,9 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
-          $installer = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter *.exe | Select-Object -First 1
+          $installer = Get-ChildItem -Path "target/release/bundle/nsis" -Filter *.exe | Select-Object -First 1
           Copy-Item $installer.FullName "release-assets/hitomi-downloader_${version}_windows_x64.exe"
-          Compress-Archive -Path "src-tauri/target/release/hitomi-downloader.exe" -DestinationPath "release-assets/hitomi-downloader_${version}_windows_x64_portable.zip"
+          Compress-Archive -Path "target/release/hitomi-downloader.exe" -DestinationPath "release-assets/hitomi-downloader_${version}_windows_x64_portable.zip"
 
       - uses: actions/upload-artifact@v4
         with:
