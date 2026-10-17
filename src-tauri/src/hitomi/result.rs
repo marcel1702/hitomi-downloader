@@ -2,15 +2,17 @@ use anyhow::Context;
 use futures::future::try_join_all;
 use indexmap::IndexSet;
 
+use crate::types::SearchSort;
+
 use super::{get_gallery_ids_for_query, get_gallery_ids_from_nozomi};
 
 /// Gallery ids every positive term is matched against, `None` if the positive terms alone decide
 async fn get_base_results(
-    sort_by_popularity: bool,
+    sort: SearchSort,
     positive_terms: &[String],
 ) -> anyhow::Result<Option<IndexSet<i32>>> {
-    if sort_by_popularity {
-        get_gallery_ids_from_nozomi(None, "popular", "all")
+    if let Some(period) = sort.popular_nozomi_tag() {
+        get_gallery_ids_from_nozomi(Some("popular"), period, "all")
             .await
             .map(Some)
     } else if positive_terms.is_empty() {
@@ -49,7 +51,7 @@ fn combine_results(
     results
 }
 
-pub async fn do_search(query: String, sort_by_popularity: bool) -> anyhow::Result<IndexSet<i32>> {
+pub async fn do_search(query: String, sort: SearchSort) -> anyhow::Result<IndexSet<i32>> {
     let terms: Vec<String> = query
         .trim()
         .strip_prefix('?')
@@ -70,7 +72,7 @@ pub async fn do_search(query: String, sort_by_popularity: bool) -> anyhow::Resul
         }
     }
 
-    let get_base_results_task = get_base_results(sort_by_popularity, &positive_terms);
+    let get_base_results_task = get_base_results(sort, &positive_terms);
     let get_positive_results_tasks = positive_terms.iter().map(|term| async move {
         get_gallery_ids_for_query(term)
             .await

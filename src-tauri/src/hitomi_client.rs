@@ -13,7 +13,7 @@ use crate::{
     config::Config,
     extensions::AnyhowErrorToStringChain,
     hitomi::{self, Suggestion},
-    types::{Comic, SearchResult},
+    types::{Comic, SearchResult, SearchSort},
     utils::get_app_handle,
 };
 
@@ -92,9 +92,9 @@ impl HitomiClient {
         &self,
         query: &str,
         page_num: usize,
-        sort_by_popularity: bool,
+        sort: SearchSort,
     ) -> anyhow::Result<SearchResult> {
-        let ids = hitomi::do_search(query.to_string(), sort_by_popularity).await?;
+        let ids = hitomi::do_search(query.to_string(), sort).await?;
 
         let search_result = self.get_page(ids.into_iter().collect(), page_num).await?;
 

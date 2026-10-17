@@ -4,6 +4,7 @@ mod download_format;
 mod log_level;
 mod proxy_config;
 mod search_result;
+mod search_sort;
 
 pub use comic::*;
 pub use comic_info::*;
@@ -11,3 +12,4 @@ pub use download_format::*;
 pub use log_level::*;
 pub use proxy_config::*;
 pub use search_result::*;
+pub use search_sort::*;

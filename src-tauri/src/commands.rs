@@ -19,7 +19,7 @@ use crate::{
     hitomi_client::HitomiClient,
     logger,
     pages::PageSource,
-    types::{Comic, SearchResult},
+    types::{Comic, SearchResult, SearchSort},
     TrayMenuItems,
 };
 
@@ -109,10 +109,10 @@ pub async fn search(
     hitomi_client: State<'_, HitomiClient>,
     query: &str,
     page_num: usize,
-    sort_by_popularity: bool,
+    sort: SearchSort,
 ) -> CommandResult<SearchResult> {
     let search_result = hitomi_client
-        .search(query, page_num, sort_by_popularity)
+        .search(query, page_num, sort)
         .await
         .map_err(|err| CommandError::from("search failed", err))?;
     tracing::debug!("search success");

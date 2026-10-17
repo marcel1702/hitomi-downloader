@@ -85,7 +85,12 @@
     "download_all": "Alle herunterladen",
     "download_all_started": "{count} Comics werden zum Download eingereiht …",
     "download_all_queued": "{count} Comics zum Download eingereiht",
-    "download_all_failed": "Downloads konnten nicht eingereiht werden"
+    "download_all_failed": "Downloads konnten nicht eingereiht werden",
+    "sort_date": "Neueste",
+    "sort_popular_today": "Beliebt: heute",
+    "sort_popular_week": "Beliebt: Woche",
+    "sort_popular_month": "Beliebt: Monat",
+    "sort_popular_year": "Beliebt: Jahr"
   },
   "downloaded_pane": {
     "name": "Lokal",

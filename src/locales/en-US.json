@@ -85,7 +85,12 @@
     "download_all": "Download All",
     "download_all_started": "Queuing {count} comics for download...",
     "download_all_queued": "{count} comics queued for download",
-    "download_all_failed": "Failed to queue downloads"
+    "download_all_failed": "Failed to queue downloads",
+    "sort_date": "Newest",
+    "sort_popular_today": "Popular: today",
+    "sort_popular_week": "Popular: week",
+    "sort_popular_month": "Popular: month",
+    "sort_popular_year": "Popular: year"
   },
   "downloaded_pane": {
     "name": "Local",
