@@ -1,18 +1,20 @@
 use std::{
+    collections::HashMap,
     io::{Cursor, Read},
+    ops::Range,
     sync::LazyLock,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::anyhow;
 use byteorder::{BigEndian, ReadBytesExt};
 use indexmap::IndexSet;
+use parking_lot::Mutex;
 use regex_lite::Regex;
 use reqwest::{header::RANGE, StatusCode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
-use tokio::sync::OnceCell;
 
 use crate::hitomi_client::HitomiClient;
 
@@ -28,8 +30,31 @@ const B: usize = 16;
 const COMPRESSED_NOZOMI_PREFIX: &str = "n";
 const TAG_INDEX_DOMAIN: &str = "tagindex.hitomi.la";
 
-static TAG_INDEX_VERSION: OnceCell<String> = OnceCell::const_new();
-static GALLERIES_INDEX_VERSION: OnceCell<String> = OnceCell::const_new();
+/// How long a fetched index version is trusted
+///
+/// Hitomi renews its search index now and then and the web page fetches the version on
+/// every visit, so the app must not hold on to one version for the whole session.
+const INDEX_VERSION_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// The index versions fetched so far, with the time they were fetched, keyed by index directory
+///
+/// Only versions that were fetched successfully end up here, a failed fetch is tried again
+/// by the next search instead of breaking the search until the app restarts.
+static INDEX_VERSIONS: LazyLock<Mutex<HashMap<&'static str, (String, Instant)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The statuses Hitomi answers with when it refuses a request because of where it comes from
+///
+/// Hitomi blocks its web page for some regions, the EU among them, and answers with 404
+/// there. The data servers the app talks to are not blocked at the moment, but would most
+/// likely answer the same way if they were.
+const REGION_BLOCK_STATUSES: [StatusCode; 3] = [
+    StatusCode::FORBIDDEN,
+    StatusCode::NOT_FOUND,
+    StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS,
+];
+const REGION_BLOCK_HINT: &str =
+    "Hitomi may be blocking access from your region, try a SOCKS5 proxy in the settings";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Node {
@@ -66,7 +91,71 @@ async fn get_index_version(name: &str) -> anyhow::Result<String> {
     let client = HitomiClient::get_api_client();
     let url = format!("{PROTOCOL}//{DOMAIN}/{name}/version?_={timestamp}");
     let request = client.read().get(&url);
-    Ok(request.send().await?.text().await?)
+    let http_resp = request.send().await?;
+    check_index_version_status(name, http_resp.status())?;
+    parse_index_version(&http_resp.text().await?)
+}
+
+/// Check the status of the answer to an index version request
+///
+/// The version file always exists, so a 404 for it is no missing file but most likely a block.
+fn check_index_version_status(name: &str, status: StatusCode) -> anyhow::Result<()> {
+    if status == StatusCode::OK {
+        Ok(())
+    } else if REGION_BLOCK_STATUSES.contains(&status) {
+        Err(anyhow!(
+            "Failed to get the version of the search index `{name}`, the server answered with `{status}`. {REGION_BLOCK_HINT}"
+        ))
+    } else {
+        Err(anyhow!(
+            "Failed to get the version of the search index `{name}`, the server answered with `{status}`"
+        ))
+    }
+}
+
+/// Read the index version from the answer, which is nothing but a number
+///
+/// Anything else, an error page above all, must never end up in an index url.
+fn parse_index_version(body: &str) -> anyhow::Result<String> {
+    let version = body.trim();
+    if version.is_empty() || !version.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(anyhow!(
+            "The search index version is not a number, the answer started with: {}",
+            crate::utils::truncate_to_bytes(version, 100)
+        ));
+    }
+    Ok(version.to_string())
+}
+
+/// Check if an index version fetched at `fetched_at` can still be used at `now`
+fn is_fresh(fetched_at: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(fetched_at) < INDEX_VERSION_TTL
+}
+
+/// The version of the search index in the directory `name`, fetched again once it is too old
+async fn index_version(name: &'static str) -> anyhow::Result<String> {
+    if let Some(version) = cached_index_version(name, Instant::now()) {
+        return Ok(version);
+    }
+    let version = get_index_version(name).await?;
+    INDEX_VERSIONS
+        .lock()
+        .insert(name, (version.clone(), Instant::now()));
+    Ok(version)
+}
+
+fn cached_index_version(name: &str, now: Instant) -> Option<String> {
+    let versions = INDEX_VERSIONS.lock();
+    let (version, fetched_at) = versions.get(name)?;
+    is_fresh(*fetched_at, now).then(|| version.clone())
+}
+
+/// Forget the fetched index versions, so the next search fetches them again
+///
+/// Called when the index answers that a file is gone, which happens after Hitomi renewed it,
+/// and when the proxy changes, so the versions are fetched over the new route.
+pub fn invalidate_index_versions() {
+    INDEX_VERSIONS.lock().clear();
 }
 
 fn encode_search_query_for_url(s: char) -> String {
@@ -78,7 +167,7 @@ fn encode_search_query_for_url(s: char) -> String {
     }
 }
 
-async fn get_url_at_range(url: &str, range: std::ops::Range<u64>) -> anyhow::Result<Vec<u8>> {
+async fn get_url_at_range(url: &str, range: Range<u64>) -> anyhow::Result<Vec<u8>> {
     let start = range.start;
     let end = range.end - 1;
     let range_header = format!("bytes={start}-{end}");
@@ -87,8 +176,51 @@ async fn get_url_at_range(url: &str, range: std::ops::Range<u64>) -> anyhow::Res
 
     let request = client.read().get(url).header(RANGE, range_header);
     let http_resp = request.send().await?;
+    let status = http_resp.status();
+    if matches!(
+        status,
+        StatusCode::NOT_FOUND | StatusCode::RANGE_NOT_SATISFIABLE
+    ) {
+        // The file of the version in use is gone, the next search has to fetch the new version
+        invalidate_index_versions();
+    }
+    let body = http_resp.bytes().await?;
 
-    Ok(http_resp.bytes().await?.to_vec())
+    range_body(url, status, &body, range)
+}
+
+/// The requested `range` of `url` out of the answer to a range request
+///
+/// A server is free to ignore the range and send the whole file with `200 OK`. Reading the
+/// start of that file instead of the requested node would hand the search the root node
+/// over and over again, so the range is cut out here instead.
+fn range_body(
+    url: &str,
+    status: StatusCode,
+    body: &[u8],
+    range: Range<u64>,
+) -> anyhow::Result<Vec<u8>> {
+    match status {
+        StatusCode::PARTIAL_CONTENT => Ok(body.to_vec()),
+        StatusCode::OK => {
+            let len = body.len();
+            let start = usize::try_from(range.start).unwrap_or(usize::MAX);
+            let end = usize::try_from(range.end).unwrap_or(usize::MAX).min(len);
+            if start >= len {
+                return Err(anyhow!(
+                    "`{url}` has only {len} bytes, it has nothing at byte {start}"
+                ));
+            }
+            Ok(body[start..end].to_vec())
+        }
+        StatusCode::NOT_FOUND | StatusCode::RANGE_NOT_SATISFIABLE => Err(anyhow!(
+            "`{url}` answered with `{status}`, the search index was probably renewed in the meantime, please search again. If it keeps failing: {REGION_BLOCK_HINT}"
+        )),
+        status if REGION_BLOCK_STATUSES.contains(&status) => Err(anyhow!(
+            "`{url}` answered with `{status}`. {REGION_BLOCK_HINT}"
+        )),
+        status => Err(anyhow!("`{url}` answered with `{status}`")),
+    }
 }
 
 fn decode_node(data: &[u8]) -> anyhow::Result<Node> {
@@ -131,29 +263,18 @@ fn decode_node(data: &[u8]) -> anyhow::Result<Node> {
 }
 
 async fn get_node_at_address(field: &str, address: i64) -> anyhow::Result<Option<Node>> {
-    let tag_index_version = TAG_INDEX_VERSION
-        .get_or_init(|| async { get_index_version(INDEX_DIR).await.unwrap_or_default() })
-        .await;
-
-    let galleries_index_version = GALLERIES_INDEX_VERSION
-        .get_or_init(|| async {
-            get_index_version(GALLERIES_INDEX_DIR)
-                .await
-                .unwrap_or_default()
-        })
-        .await;
-
+    // Only the version of the index the field lives in is needed
     let url = match field {
-        "galleries" => format!(
-            "{PROTOCOL}//{DOMAIN}/{GALLERIES_INDEX_DIR}/galleries.{galleries_index_version}.index"
-        ),
-        "languages" => format!(
-            "{PROTOCOL}//{DOMAIN}/{GALLERIES_INDEX_DIR}/languages.{galleries_index_version}.index"
-        ),
-        "nozomiurl" => format!(
-            "{PROTOCOL}//{DOMAIN}/{GALLERIES_INDEX_DIR}/nozomiurl.{galleries_index_version}.index"
-        ),
-        _ => format!("{PROTOCOL}//{DOMAIN}/{INDEX_DIR}/{field}.{tag_index_version}.index"),
+        "galleries" | "languages" | "nozomiurl" => {
+            let galleries_index_version = index_version(GALLERIES_INDEX_DIR).await?;
+            format!(
+                "{PROTOCOL}//{DOMAIN}/{GALLERIES_INDEX_DIR}/{field}.{galleries_index_version}.index"
+            )
+        }
+        _ => {
+            let tag_index_version = index_version(INDEX_DIR).await?;
+            format!("{PROTOCOL}//{DOMAIN}/{INDEX_DIR}/{field}.{tag_index_version}.index")
+        }
     };
 
     #[allow(clippy::cast_sign_loss)]
@@ -208,13 +329,7 @@ async fn b_search(field: &str, key: &[u8], node: &Node) -> anyhow::Result<Option
 }
 
 async fn get_gallery_ids_from_data(data: (i64, i32)) -> anyhow::Result<IndexSet<i32>> {
-    let galleries_index_version = GALLERIES_INDEX_VERSION
-        .get_or_init(|| async {
-            get_index_version(GALLERIES_INDEX_DIR)
-                .await
-                .unwrap_or_default()
-        })
-        .await;
+    let galleries_index_version = index_version(GALLERIES_INDEX_DIR).await?;
 
     let url = format!(
         "{PROTOCOL}//{DOMAIN}/{GALLERIES_INDEX_DIR}/galleries.{galleries_index_version}.data"
@@ -417,6 +532,121 @@ mod tests {
             let err = nozomi_file_exists(ADDRESS, status).unwrap_err();
             assert!(err.to_string().contains(status.as_str()), "{err}");
         }
+    }
+
+    #[test]
+    fn index_version_is_a_number() {
+        assert_eq!(parse_index_version("1729083912\n").unwrap(), "1729083912");
+        assert_eq!(parse_index_version("  42 ").unwrap(), "42");
+    }
+
+    #[test]
+    fn anything_else_is_no_index_version() {
+        for body in [
+            "",
+            "  \n",
+            "<!DOCTYPE html><html>Not Found</html>",
+            "12a",
+            "-5",
+        ] {
+            assert!(parse_index_version(body).is_err(), "`{body}` was accepted");
+        }
+    }
+
+    #[test]
+    fn blocked_version_request_points_at_the_proxy() {
+        assert!(check_index_version_status("galleriesindex", StatusCode::OK).is_ok());
+
+        for status in REGION_BLOCK_STATUSES {
+            let err = check_index_version_status("galleriesindex", status).unwrap_err();
+            let message = err.to_string();
+            assert!(message.contains(status.as_str()), "{message}");
+            assert!(message.contains("SOCKS5"), "{message}");
+        }
+
+        let err = check_index_version_status("galleriesindex", StatusCode::BAD_GATEWAY)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("502") && !err.contains("SOCKS5"), "{err}");
+    }
+
+    const INDEX_URL: &str = "https://example.test/galleriesindex/galleries.1.index";
+
+    #[test]
+    fn partial_content_is_used_as_it_is() {
+        let body = range_body(INDEX_URL, StatusCode::PARTIAL_CONTENT, b"node", 464..928).unwrap();
+        assert_eq!(body, b"node");
+    }
+
+    #[test]
+    fn ignored_range_is_cut_out_of_the_whole_file() {
+        let file: Vec<u8> = (0..=255).collect();
+
+        let body = range_body(INDEX_URL, StatusCode::OK, &file, 16..20).unwrap();
+        assert_eq!(body, vec![16, 17, 18, 19]);
+        // a node at the end of the file is shorter than the requested range
+        let body = range_body(INDEX_URL, StatusCode::OK, &file, 250..714).unwrap();
+        assert_eq!(body, vec![250, 251, 252, 253, 254, 255]);
+        assert!(range_body(INDEX_URL, StatusCode::OK, &file, 256..720).is_err());
+    }
+
+    #[test]
+    fn missing_index_file_asks_to_search_again() {
+        for status in [StatusCode::NOT_FOUND, StatusCode::RANGE_NOT_SATISFIABLE] {
+            let err = range_body(INDEX_URL, status, b"<html>", 0..464)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("renewed"), "{err}");
+        }
+    }
+
+    #[test]
+    fn refused_index_request_points_at_the_proxy() {
+        let err = range_body(INDEX_URL, StatusCode::FORBIDDEN, b"<html>", 0..464)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("403") && err.contains("SOCKS5"), "{err}");
+
+        let err = range_body(INDEX_URL, StatusCode::INTERNAL_SERVER_ERROR, b"", 0..464)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("500") && !err.contains("SOCKS5"), "{err}");
+    }
+
+    #[test]
+    fn index_version_expires() {
+        let fetched_at = Instant::now();
+        assert!(is_fresh(fetched_at, fetched_at + Duration::from_secs(60)));
+        assert!(!is_fresh(
+            fetched_at,
+            fetched_at + Duration::from_secs(11 * 60)
+        ));
+    }
+
+    /// One test for everything touching the shared cache, so parallel tests can not interfere
+    #[test]
+    fn cached_index_version_is_used_until_it_expires_or_is_invalidated() {
+        let fetched_at = Instant::now();
+        INDEX_VERSIONS
+            .lock()
+            .insert(GALLERIES_INDEX_DIR, ("1729083912".to_string(), fetched_at));
+
+        assert_eq!(
+            cached_index_version(GALLERIES_INDEX_DIR, fetched_at + Duration::from_secs(60)),
+            Some("1729083912".to_string())
+        );
+        assert_eq!(
+            cached_index_version(
+                GALLERIES_INDEX_DIR,
+                fetched_at + Duration::from_secs(11 * 60)
+            ),
+            None
+        );
+        // the other index has its own version
+        assert_eq!(cached_index_version(INDEX_DIR, fetched_at), None);
+
+        invalidate_index_versions();
+        assert_eq!(cached_index_version(GALLERIES_INDEX_DIR, fetched_at), None);
     }
 
     #[test]

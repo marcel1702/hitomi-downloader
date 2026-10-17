@@ -78,6 +78,10 @@ impl HitomiClient {
     }
 
     pub fn reload_client(&self) {
+        // Versions fetched over the old route, or the failure to fetch them, say nothing
+        // about the new one
+        hitomi::invalidate_index_versions();
+
         let api_client = create_api_client(&self.app);
         *self.api_client.write() = api_client;
 
