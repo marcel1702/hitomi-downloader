@@ -14,7 +14,7 @@ pub struct Settings {
     pub library_dir: Option<PathBuf>,
     /// The exports (`HITOMI_EXPORT_DIR`), fixed for as long as it is set
     pub export_dir: Option<PathBuf>,
-    /// The built frontend (`HITOMI_WEB_DIR`)
+    /// The frontend built by `pnpm build:web` (`HITOMI_WEB_DIR`)
     pub web_dir: PathBuf,
     /// `HITOMI_HOST` and `HITOMI_PORT`
     pub addr: SocketAddr,
@@ -57,7 +57,7 @@ impl Settings {
                 .map_or_else(|| PathBuf::from("config"), PathBuf::from),
             library_dir: var("HITOMI_LIBRARY_DIR").map(PathBuf::from),
             export_dir: var("HITOMI_EXPORT_DIR").map(PathBuf::from),
-            web_dir: var("HITOMI_WEB_DIR").map_or_else(|| PathBuf::from("dist"), PathBuf::from),
+            web_dir: var("HITOMI_WEB_DIR").map_or_else(|| PathBuf::from("dist-web"), PathBuf::from),
             addr: SocketAddr::new(host, port),
         })
     }
@@ -82,7 +82,7 @@ mod tests {
         let settings = settings(&[]).unwrap();
         assert_eq!(settings.addr, "127.0.0.1:8080".parse().unwrap());
         assert_eq!(settings.config_dir, PathBuf::from("config"));
-        assert_eq!(settings.web_dir, PathBuf::from("dist"));
+        assert_eq!(settings.web_dir, PathBuf::from("dist-web"));
         assert_eq!(settings.library_dir, None);
         assert_eq!(settings.export_dir, None);
     }
