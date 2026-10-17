@@ -14,6 +14,11 @@ pub struct SearchResult {
     pub ids: Vec<i32>,
 }
 impl SearchResult {
+    /// The comics on this page
+    pub fn comics(&self) -> &[Comic] {
+        &self.comics
+    }
+
     pub async fn from_gallery_infos(
         context: &Context,
         gallery_infos: Vec<GalleryInfo>,
