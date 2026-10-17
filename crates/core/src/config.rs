@@ -6,7 +6,6 @@ use std::{
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager};
 
 use crate::types::{DownloadFormat, ProxyConfig};
 
@@ -40,8 +39,8 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(app: &AppHandle) -> anyhow::Result<Config> {
-        let app_data_dir = app.path().app_data_dir()?;
+    /// Load the config from `config.json` in `app_data_dir`, or create it there
+    pub fn new(app_data_dir: &Path) -> anyhow::Result<Config> {
         let config_path = app_data_dir.join("config.json");
 
         let mut config = if config_path.exists() {
@@ -52,10 +51,10 @@ impl Config {
                 // Otherwise, merge the default configuration with the configuration already in the file
                 // to avoid resetting all configuration items when new configuration items are added in the new version
                 // after the user upgrades to the new version
-                Err(_) => Config::merge_config(&config_string, &app_data_dir),
+                Err(_) => Config::merge_config(&config_string, app_data_dir),
             }
         } else {
-            Config::default(&app_data_dir)
+            Config::default(app_data_dir)
         };
         // A config written by an older version can name a language that is no longer
         // shipped, which would leave the interface without a selected language
@@ -63,7 +62,7 @@ impl Config {
             config.language = DEFAULT_LANGUAGE.to_string();
         }
         config.clamp_concurrency();
-        config.save(app)?;
+        config.save(app_data_dir)?;
         Ok(config)
     }
 
@@ -101,8 +100,7 @@ impl Config {
             .clamp(*IMG_CONCURRENCY_RANGE.start(), *IMG_CONCURRENCY_RANGE.end());
     }
 
-    pub fn save(&self, app: &AppHandle) -> anyhow::Result<()> {
-        let app_data_dir = app.path().app_data_dir()?;
+    pub fn save(&self, app_data_dir: &Path) -> anyhow::Result<()> {
         let config_path = app_data_dir.join("config.json");
         let config_string = serde_json::to_string_pretty(self)?;
         std::fs::write(config_path, config_string)?;

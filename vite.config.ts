@@ -47,8 +47,8 @@ export default defineConfig(async () => ({
         }
         : undefined,
     watch: {
-      // 3. tell vite to ignore watching `src-tauri`
-      ignored: ['**/src-tauri/**'],
+      // 3. tell vite to ignore watching the Rust side: the crates and the build output of the workspace
+      ignored: ['**/src-tauri/**', '**/crates/**', '**/target/**'],
     },
   },
 }))

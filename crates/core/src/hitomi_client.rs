@@ -2,21 +2,19 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context as _};
 use bytes::Bytes;
 use parking_lot::RwLock;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::{Client, StatusCode};
 use reqwest_middleware::ClientWithMiddleware;
 use reqwest_retry::{policies::ExponentialBackoff, Jitter, RetryTransientMiddleware};
-use tauri::{AppHandle, Manager};
 
 use crate::{
-    config::Config,
+    context::Context,
     extensions::AnyhowErrorToStringChain,
     hitomi::{self, GalleryInfo, Suggestion},
     types::{Comic, SearchResult, SearchSort},
-    utils::get_app_handle,
 };
 
 /// Time allowed to establish a connection for an api request
@@ -48,25 +46,25 @@ impl std::error::Error for UnexpectedStatus {}
 
 #[derive(Clone)]
 pub struct HitomiClient {
-    app: AppHandle,
+    context: Context,
     api_client: Arc<RwLock<ClientWithMiddleware>>,
     img_client: Arc<RwLock<ClientWithMiddleware>>,
     cover_client: Arc<RwLock<Client>>,
 }
 
 impl HitomiClient {
-    pub fn new(app: AppHandle) -> Self {
-        let api_client = create_api_client(&app);
+    pub fn new(context: Context) -> Self {
+        let api_client = create_api_client(&context);
         let api_client = Arc::new(RwLock::new(api_client));
 
-        let img_client = create_img_client(&app);
+        let img_client = create_img_client(&context);
         let img_client = Arc::new(RwLock::new(img_client));
 
-        let cover_client = create_cover_client(&app);
+        let cover_client = create_cover_client(&context);
         let cover_client = Arc::new(RwLock::new(cover_client));
 
         Self {
-            app,
+            context,
             api_client,
             img_client,
             cover_client,
@@ -74,9 +72,7 @@ impl HitomiClient {
     }
 
     pub fn get_api_client() -> Arc<RwLock<ClientWithMiddleware>> {
-        let app = get_app_handle();
-        let hitomi_client = app.state::<HitomiClient>();
-        hitomi_client.api_client.clone()
+        Context::global().hitomi_client().api_client.clone()
     }
 
     pub fn reload_client(&self) {
@@ -84,13 +80,13 @@ impl HitomiClient {
         // about the new one
         hitomi::invalidate_index_versions();
 
-        let api_client = create_api_client(&self.app);
+        let api_client = create_api_client(&self.context);
         *self.api_client.write() = api_client;
 
-        let img_client = create_img_client(&self.app);
+        let img_client = create_img_client(&self.context);
         *self.img_client.write() = img_client;
 
-        let cover_client = create_cover_client(&self.app);
+        let cover_client = create_cover_client(&self.context);
         *self.cover_client.write() = cover_client;
     }
 
@@ -125,9 +121,14 @@ impl HitomiClient {
         let results = futures::future::join_all(get_gallery_info_tasks).await;
         let gallery_infos = gallery_infos_of_page(results)?;
 
-        let search_result =
-            SearchResult::from_gallery_infos(&self.app, gallery_infos, page_num, total_page, ids)
-                .await?;
+        let search_result = SearchResult::from_gallery_infos(
+            &self.context,
+            gallery_infos,
+            page_num,
+            total_page,
+            ids,
+        )
+        .await?;
 
         Ok(search_result)
     }
@@ -137,7 +138,7 @@ impl HitomiClient {
             .await
             .context(format!("Failed to get gallery info for `{id}`"))?;
 
-        let comic = Comic::from_gallery_info(&self.app, gallery).await?;
+        let comic = Comic::from_gallery_info(&self.context, gallery).await?;
         Ok(comic)
     }
 
@@ -211,14 +212,14 @@ fn gallery_infos_of_page(
     Ok(gallery_infos)
 }
 
-fn create_api_client(app: &AppHandle) -> ClientWithMiddleware {
+fn create_api_client(context: &Context) -> ClientWithMiddleware {
     let retry_policy = ExponentialBackoff::builder()
         .base(1)
         .jitter(Jitter::Bounded)
         .build_with_total_retry_duration(Duration::from_secs(5));
 
     let client = reqwest::ClientBuilder::new()
-        .set_proxy(app, "api_client")
+        .set_proxy(context, "api_client")
         // No limit on the whole request: the nozomi index files are several megabytes,
         // which a slow line or a proxy can not deliver in a few seconds
         .connect_timeout(API_CONNECT_TIMEOUT)
@@ -232,14 +233,14 @@ fn create_api_client(app: &AppHandle) -> ClientWithMiddleware {
         .build()
 }
 
-fn create_img_client(app: &AppHandle) -> ClientWithMiddleware {
+fn create_img_client(context: &Context) -> ClientWithMiddleware {
     let retry_policy = ExponentialBackoff::builder()
         .base(1)
         .jitter(Jitter::Bounded)
         .build_with_max_retries(20);
 
     let client = reqwest::ClientBuilder::new()
-        .set_proxy(app, "img_client")
+        .set_proxy(context, "img_client")
         .connect_timeout(IMG_CONNECT_TIMEOUT)
         .read_timeout(IMG_READ_TIMEOUT)
         .build()
@@ -250,9 +251,9 @@ fn create_img_client(app: &AppHandle) -> ClientWithMiddleware {
         .build()
 }
 
-fn create_cover_client(app: &AppHandle) -> Client {
+fn create_cover_client(context: &Context) -> Client {
     reqwest::ClientBuilder::new()
-        .set_proxy(app, "cover_client")
+        .set_proxy(context, "cover_client")
         .connect_timeout(IMG_CONNECT_TIMEOUT)
         .read_timeout(IMG_READ_TIMEOUT)
         .build()
@@ -284,12 +285,12 @@ fn ipv4_first(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
 }
 
 trait ClientBuilderExt {
-    fn set_proxy(self, app: &AppHandle, client_name: &str) -> Self;
+    fn set_proxy(self, context: &Context, client_name: &str) -> Self;
 }
 
 impl ClientBuilderExt for reqwest::ClientBuilder {
-    fn set_proxy(self, app: &AppHandle, client_name: &str) -> reqwest::ClientBuilder {
-        let proxy_config = app.state::<RwLock<Config>>().read().proxy.clone();
+    fn set_proxy(self, context: &Context, client_name: &str) -> reqwest::ClientBuilder {
+        let proxy_config = context.config().read().proxy.clone();
         // never pick up a proxy from the environment or the OS settings
         let builder = self.no_proxy();
         if !proxy_config.enabled {

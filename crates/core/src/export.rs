@@ -1,14 +1,13 @@
 use std::{io::Cursor, path::Path};
 
-use anyhow::Context;
+use anyhow::Context as _;
 use lopdf::{
     content::{Content, Operation},
     dictionary, Document, Object, Stream,
 };
-use tauri::AppHandle;
-use tauri_specta::Event;
 
 use crate::{
+    context::Context,
     events::{ExportCbzEvent, ExportPdfEvent},
     pages::{self, PageSource},
     types::{Comic, ComicInfo},
@@ -29,22 +28,20 @@ impl Archive {
 
 struct CbzEventGuard {
     uuid: String,
-    app: AppHandle,
+    context: Context,
     success: bool,
 }
 
 impl Drop for CbzEventGuard {
     fn drop(&mut self) {
         if self.success {
-            let _ = ExportCbzEvent::End {
+            self.context.emit(ExportCbzEvent::End {
                 uuid: self.uuid.clone(),
-            }
-            .emit(&self.app);
+            });
         } else {
-            let _ = ExportCbzEvent::Error {
+            self.context.emit(ExportCbzEvent::Error {
                 uuid: self.uuid.clone(),
-            }
-            .emit(&self.app);
+            });
         }
     }
 }
@@ -52,19 +49,18 @@ impl Drop for CbzEventGuard {
 ///
 /// Comics downloaded as a cbz archive are copied, downloads made before the cbz
 /// format was introduced are packed into an archive on the fly.
-pub fn cbz(app: &AppHandle, comic: &Comic) -> anyhow::Result<()> {
+pub fn cbz(context: &Context, comic: &Comic) -> anyhow::Result<()> {
     let comic_title = &comic.title;
     let event_uuid = uuid::Uuid::new_v4().to_string();
 
-    let _ = ExportCbzEvent::Start {
+    context.emit(ExportCbzEvent::Start {
         uuid: event_uuid.clone(),
         title: comic_title.clone(),
-    }
-    .emit(app);
+    });
     // Event guard to ensure that the error event is sent if the function panics
     let mut cbz_event_guard = CbzEventGuard {
         uuid: event_uuid.clone(),
-        app: app.clone(),
+        context: context.clone(),
         success: false,
     };
 
@@ -73,7 +69,7 @@ pub fn cbz(app: &AppHandle, comic: &Comic) -> anyhow::Result<()> {
         .as_ref()
         .context("`comic_download_dir` field is `None`")?;
     let export_dir = comic
-        .get_comic_export_dir(app)
+        .get_comic_export_dir(context)
         .context("Failed to get comic export directory")?;
     // Ensure export directory exists
     std::fs::create_dir_all(&export_dir).context(format!(
@@ -121,7 +117,7 @@ pub fn cbz(app: &AppHandle, comic: &Comic) -> anyhow::Result<()> {
 
 struct PdfEventGuard {
     uuid: String,
-    app: AppHandle,
+    context: Context,
     success: bool,
 }
 
@@ -129,28 +125,27 @@ impl Drop for PdfEventGuard {
     fn drop(&mut self) {
         let uuid = self.uuid.clone();
 
-        let _ = if self.success {
-            ExportPdfEvent::End { uuid }.emit(&self.app)
+        if self.success {
+            self.context.emit(ExportPdfEvent::End { uuid });
         } else {
-            ExportPdfEvent::Error { uuid }.emit(&self.app)
-        };
+            self.context.emit(ExportPdfEvent::Error { uuid });
+        }
     }
 }
 
-pub fn pdf(app: &AppHandle, comic: &Comic) -> anyhow::Result<()> {
+pub fn pdf(context: &Context, comic: &Comic) -> anyhow::Result<()> {
     let comic_title = &comic.title;
     let event_uuid = uuid::Uuid::new_v4().to_string();
 
-    let _ = ExportPdfEvent::Start {
+    context.emit(ExportPdfEvent::Start {
         uuid: event_uuid.clone(),
         title: comic_title.clone(),
-    }
-    .emit(app);
+    });
 
     // Event guard to ensure that the error event is sent if the function panics
     let mut pdf_event_guard = PdfEventGuard {
         uuid: event_uuid.clone(),
-        app: app.clone(),
+        context: context.clone(),
         success: false,
     };
 
@@ -159,7 +154,7 @@ pub fn pdf(app: &AppHandle, comic: &Comic) -> anyhow::Result<()> {
         .as_ref()
         .context("`comic_download_dir` field is `None`")?;
     let export_dir = comic
-        .get_comic_export_dir(app)
+        .get_comic_export_dir(context)
         .context("Failed to get comic export directory")?;
     // Ensure export directory exists
     std::fs::create_dir_all(&export_dir).context(format!(

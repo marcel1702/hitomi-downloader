@@ -9,6 +9,8 @@ export default defineConfig([
     ignores: [
       'dist/**',
       'src-tauri/**',
+      'crates/**',
+      'target/**',
       'src/bindings.ts',
       'src/vite-env.d.ts',
       'src/auto-imports.d.ts',

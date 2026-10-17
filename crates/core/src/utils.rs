@@ -1,6 +1,3 @@
-use std::sync::OnceLock;
-use tauri::AppHandle;
-
 /// Maximum length of a single path component on the common filesystems
 ///
 /// ext4, APFS and NTFS all stop at 255, and they count bytes rather than characters,
@@ -70,15 +67,6 @@ pub fn filename_filter(s: &str) -> String {
         .trim_end_matches('.')
         .trim()
         .to_string()
-}
-
-pub static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
-
-pub fn get_app_handle() -> AppHandle {
-    APP_HANDLE
-        .get()
-        .expect("APP_HANDLE not initialized")
-        .clone()
 }
 
 #[cfg(test)]

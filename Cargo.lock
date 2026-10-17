@@ -1637,7 +1637,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hitomi-downloader"
+name = "hitomi-core"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -1660,12 +1660,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "specta",
- "specta-typescript",
  "strfmt",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
  "tauri-specta",
  "tokio",
  "tracing",
@@ -1675,6 +1670,22 @@ dependencies = [
  "walkdir",
  "yaserde",
  "zip",
+]
+
+[[package]]
+name = "hitomi-downloader"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "hitomi-core",
+ "specta",
+ "specta-typescript",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-specta",
+ "tracing",
 ]
 
 [[package]]

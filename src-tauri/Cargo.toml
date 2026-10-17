@@ -1,11 +1,11 @@
 [package]
 name = "hitomi-downloader"
-version = "1.0.0"
 description = "A GUI-based multi-threaded downloader for hitomi.la"
-authors = ["marcel1702 <https://github.com/marcel1702>"]
-edition = "2021"
-license = "MIT"
-repository = "https://github.com/marcel1702/hitomi-downloader"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -20,55 +20,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+hitomi-core = { workspace = true, features = ["tauri"] }
+
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-yaserde = { version = "0.12.0", features = ["yaserde_derive"] }
-
-specta = { version = "=2.0.0-rc.20", features = ["serde_json"] }
-tauri-specta = { version = "=2.0.0-rc.20", features = ["derive", "typescript"] }
+specta.workspace = true
+tauri-specta.workspace = true
 specta-typescript = { version = "=0.0.7" }
 
-reqwest = { version = "0.12.19", default-features = false, features = ["default-tls", "socks"] }
-reqwest-retry = { version = "0.7.0" }
-reqwest-middleware = { version = "0.4.2" }
-
-anyhow = { version = "1.0.98" }
-parking_lot = { version = "0.12.4", features = ["send_guard"] }
-tracing = { version = "0.1.41" }
-tracing-subscriber = { version = "0.3.20", features = ["json", "time", "local-time"] }
-tracing-appender = { version = "0.2.3" }
-notify = { version = "8.0.0" }
-tokio = { version = "1.45.1", features = ["full"] }
-chrono = { version = "0.4.41" }
-regex-lite = { version = "0.1.6" }
-futures = { version = "0.3.31" }
-byteorder = { version = "1.5.0" }
-sha2 = { version = "0.10.9" }
-indexmap = { version = "2.9.0" }
-strfmt = { version = "0.2.4" }
-bytes = { version = "1.11.1" }
-lopdf = { git = "https://github.com/lanyeeee/lopdf", features = ["embed_image_webp"] }
-uuid = { version = "1.16.0", features = ["v4"] }
-image = { version = "0.25.6", features = ["webp"], default-features = false }
-zip = { version = "4.0.0", default-features = false }
-walkdir = { version = "2.5.0" }
-
-# Security fix: force a minimum safe version
-rand = ">=0.9.3"
-
-# native-tls only links against openssl on Linux (Windows uses schannel,
-# macOS uses Security.framework), so this must stay platform-gated —
-# an unconditional dependency here breaks Windows builds, which don't
-# have a system OpenSSL installation.
-[target.'cfg(not(windows))'.dependencies]
-openssl = ">=0.10.80"
-
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1
-panic = "abort"
+anyhow.workspace = true
+tracing.workspace = true
