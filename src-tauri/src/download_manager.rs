@@ -10,7 +10,9 @@ use std::{
 };
 
 use anyhow::{anyhow, Context};
+use bytes::Bytes;
 use parking_lot::RwLock;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Manager};
@@ -24,8 +26,8 @@ use crate::{
     config::Config,
     events::{DownloadSpeedEvent, DownloadTaskEvent},
     extensions::AnyhowErrorToStringChain,
-    hitomi::{image_url_from_image, Ext},
-    hitomi_client::HitomiClient,
+    hitomi::{image_url_from_image, invalidate_gg, Ext, GalleryFiles},
+    hitomi_client::{HitomiClient, UnexpectedStatus},
     pages,
     types::{Comic, ComicInfo, DownloadFormat},
     utils::filename_filter,
@@ -218,29 +220,31 @@ impl DownloadTask {
     async fn download_comic(&self) {
         let id = self.comic.id;
         let comic_title = &self.comic.title;
-        // Get the url of each image of this comic
-        let Some(img_urls) = self.get_img_urls().await else {
-            return;
-        };
         // the total number of images that need to be downloaded
         self.total_img_count
-            .store(img_urls.len() as u32, Ordering::Relaxed);
+            .store(self.comic.files.len() as u32, Ordering::Relaxed);
         // create temporary download directory
         let Some(temp_download_dir) = self.create_temp_download_dir() else {
             return;
         };
-        // get the download format from the config
-        let download_format = self.app.state::<RwLock<Config>>().read().download_format;
-        // image download paths
-        let save_paths: Vec<PathBuf> = img_urls
+        // The format of each image and where it is saved. The format is the one the task
+        // was created with, not the current config, so that a format change while the task
+        // waits can not mix up file names and downloaded data
+        let img_formats: Vec<DownloadFormat> = self
+            .comic
+            .files
+            .iter()
+            .map(|file| img_format_of(file, self.download_format))
+            .collect();
+        let save_paths: Vec<PathBuf> = img_formats
             .iter()
             .enumerate()
-            .map(|(i, _)| {
-                let extension = download_format.to_extension();
+            .map(|(i, format)| {
+                let extension = format.to_extension();
                 temp_download_dir.join(format!("{:04}.{extension}", i + 1))
             })
             .collect();
-        // delete files in the temporary download directory that do not match `config.download_format`
+        // delete files in the temporary download directory that are not one of the images above
         if let Err(err) = self.clean_temp_download_dir(&temp_download_dir, &save_paths) {
             let err_title =
                 format!("Failed to clean temporary download directory of `{comic_title}`");
@@ -255,10 +259,9 @@ impl DownloadTask {
 
         let mut join_set = JoinSet::new();
         // create download tasks one by one
-        for (i, url) in img_urls.into_iter().enumerate() {
-            let url = url.clone();
-            let temp_download_dir = temp_download_dir.clone();
-            let download_img_task = DownloadImgTask::new(self, url, temp_download_dir, i);
+        let imgs = self.comic.files.iter().zip(img_formats).zip(save_paths);
+        for ((file, format), save_path) in imgs {
+            let download_img_task = DownloadImgTask::new(self, file.clone(), format, save_path);
             // create download task
             join_set.spawn(download_img_task.process());
         }
@@ -282,7 +285,16 @@ impl DownloadTask {
             return;
         }
         // all images of this comic are downloaded successfully
-        let download_dir = match self.pack_temp_download_dir(&temp_download_dir) {
+        // Packing reads and writes the whole comic, so it must not block the async runtime
+        let pack_result = {
+            let task = self.clone();
+            let temp_download_dir = temp_download_dir.clone();
+            tokio::task::spawn_blocking(move || task.pack_temp_download_dir(&temp_download_dir))
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|pack_result| pack_result)
+        };
+        let download_dir = match pack_result {
             Ok(download_dir) => download_dir,
             Err(err) => {
                 let err_title =
@@ -319,33 +331,6 @@ impl DownloadTask {
 
         self.set_state(DownloadTaskState::Completed);
         self.emit_download_task_update_event();
-    }
-
-    async fn get_img_urls(&self) -> Option<Vec<String>> {
-        let id = self.comic.id;
-        let comic_title = &self.comic.title;
-
-        let get_img_urls_task = self.comic.files.iter().map(|file| {
-            let ext = match self.download_format {
-                DownloadFormat::Webp => Ext::Webp,
-                DownloadFormat::Avif => Ext::Avif,
-            };
-            image_url_from_image(id, file, ext)
-        });
-        let img_urls = match futures::future::try_join_all(get_img_urls_task).await {
-            Ok(img_urls) => img_urls,
-            Err(err) => {
-                let err_title = format!("Failed to get image urls of `{comic_title}`");
-                let string_chain = err.to_string_chain();
-                tracing::error!(err_title, message = string_chain);
-
-                self.set_state(DownloadTaskState::Failed);
-                self.emit_download_task_update_event();
-
-                return None;
-            }
-        };
-        Some(img_urls)
     }
 
     fn create_temp_download_dir(&self) -> Option<PathBuf> {
@@ -664,30 +649,67 @@ fn clean_up_after_packing(temp_download_dir: &Path, download_dir: &Path) -> anyh
     Ok(())
 }
 
+/// The format `file` is downloaded in when the comic is downloaded as `download_format`
+///
+/// Not every image is available as avif, those fall back to webp instead of failing the comic.
+fn img_format_of(file: &GalleryFiles, download_format: DownloadFormat) -> DownloadFormat {
+    match download_format {
+        DownloadFormat::Avif if file.hasavif == 0 => DownloadFormat::Webp,
+        download_format => download_format,
+    }
+}
+
+/// Path an image is written to before it is renamed to `save_path`
+///
+/// Only a completely written image ever carries its final name, so an image cut off by a
+/// crash or by quitting the app is downloaded again instead of being packed into the archive.
+/// The leftover is removed by `clean_temp_download_dir`, as it is not one of the save paths.
+fn part_path_of(save_path: &Path) -> PathBuf {
+    let mut part_path = save_path.as_os_str().to_os_string();
+    part_path.push(".part");
+    PathBuf::from(part_path)
+}
+
+/// Write `data` to `save_path` so that the file is either complete or not there at all
+async fn write_img(save_path: &Path, data: &[u8]) -> anyhow::Result<()> {
+    let part_path = part_path_of(save_path);
+    tokio::fs::write(&part_path, data)
+        .await
+        .context(format!("Failed to write `{}`", part_path.display()))?;
+    tokio::fs::rename(&part_path, save_path)
+        .await
+        .context(format!(
+            "Failed to rename `{}` to `{}`",
+            part_path.display(),
+            save_path.display()
+        ))?;
+    Ok(())
+}
+
 #[derive(Clone)]
 struct DownloadImgTask {
     app: AppHandle,
     download_manager: DownloadManager,
     download_task: DownloadTask,
-    url: String,
-    temp_download_dir: PathBuf,
-    index: usize,
+    file: GalleryFiles,
+    format: DownloadFormat,
+    save_path: PathBuf,
 }
 
 impl DownloadImgTask {
     pub fn new(
         download_task: &DownloadTask,
-        url: String,
-        temp_download_dir: PathBuf,
-        index: usize,
+        file: GalleryFiles,
+        format: DownloadFormat,
+        save_path: PathBuf,
     ) -> Self {
         Self {
             app: download_task.app.clone(),
             download_manager: download_task.download_manager.clone(),
             download_task: download_task.clone(),
-            url,
-            temp_download_dir,
-            index,
+            file,
+            format,
+            save_path,
         }
     }
 
@@ -720,16 +742,13 @@ impl DownloadImgTask {
     }
 
     async fn download_img(&self) {
-        let url = &self.url;
         let id = self.download_task.comic.id;
         let comic_title = &self.download_task.comic.title;
+        let save_path = &self.save_path;
+        let hash = &self.file.hash;
 
-        tracing::trace!(id, comic_title, url, "Start downloading images");
+        tracing::trace!(id, comic_title, hash, "Start downloading images");
 
-        let extension = self.download_task.download_format.to_extension();
-        let save_path = self
-            .temp_download_dir
-            .join(format!("{:04}.{extension}", self.index + 1));
         if save_path.exists() {
             // If the image already exists, skip it
             self.download_task
@@ -738,23 +757,23 @@ impl DownloadImgTask {
 
             self.download_task.emit_download_task_update_event();
 
-            tracing::trace!(id, comic_title, url, "Image already exists, skip download");
+            tracing::trace!(id, comic_title, hash, "Image already exists, skip download");
             return;
         }
         // download image
-        let img_data = match self.hitomi_client().get_img_data(url).await {
+        let img_data = match self.fetch_img_data().await {
             Ok(img_data) => img_data,
             Err(err) => {
-                let err_title = format!("Failed to download image `{url}`");
+                let err_title = format!("Failed to download image `{hash}` of `{comic_title}`");
                 let string_chain = err.to_string_chain();
                 tracing::error!(err_title, message = string_chain);
                 return;
             }
         };
 
-        tracing::trace!(id, comic_title, url, "Image downloaded to memory");
+        tracing::trace!(id, comic_title, hash, "Image downloaded to memory");
         // save image
-        if let Err(err) = std::fs::write(&save_path, &img_data).map_err(anyhow::Error::from) {
+        if let Err(err) = write_img(save_path, &img_data).await {
             let err_title = format!("Failed to save image `{}`", save_path.display());
             let string_chain = err.to_string_chain();
             tracing::error!(err_title, message = string_chain);
@@ -763,7 +782,7 @@ impl DownloadImgTask {
 
         tracing::trace!(
             id,
-            url,
+            hash,
             comic_title,
             "Image successfully saved to `{}`",
             save_path.display()
@@ -780,15 +799,61 @@ impl DownloadImgTask {
         self.download_task.emit_download_task_update_event();
     }
 
+    /// Download the image, building its url right before the request
+    ///
+    /// The url depends on `gg.js`, which Hitomi rotates. A url built when the comic was
+    /// queued can be stale by the time the image is downloaded, above all after a pause.
+    /// If the server says the image is not there, the url is built once more from a fresh
+    /// `gg.js` before giving up.
+    async fn fetch_img_data(&self) -> anyhow::Result<Bytes> {
+        let hitomi_client = self.hitomi_client();
+        let url = self.img_url().await?;
+        let err = match hitomi_client.get_img_data(&url).await {
+            Ok(img_data) => return Ok(img_data),
+            Err(err) => err,
+        };
+
+        let url_is_stale = err
+            .downcast_ref::<UnexpectedStatus>()
+            .is_some_and(|err| matches!(err.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND));
+        if !url_is_stale {
+            return Err(err).context(format!("Failed to download `{url}`"));
+        }
+
+        tracing::debug!(
+            url,
+            "Image url looks stale, building it again from a fresh gg.js"
+        );
+        invalidate_gg().await;
+        let fresh_url = self.img_url().await?;
+        hitomi_client
+            .get_img_data(&fresh_url)
+            .await
+            .context(format!("Failed to download `{fresh_url}`"))
+    }
+
+    async fn img_url(&self) -> anyhow::Result<String> {
+        let ext = match self.format {
+            DownloadFormat::Webp => Ext::Webp,
+            DownloadFormat::Avif => Ext::Avif,
+        };
+        image_url_from_image(self.download_task.comic.id, &self.file, ext)
+            .await
+            .context(format!(
+                "Failed to get the url of image `{}`",
+                self.file.hash
+            ))
+    }
+
     async fn acquire_img_permit<'a>(
         &'a self,
         permit: &mut Option<SemaphorePermit<'a>>,
     ) -> ControlFlow<()> {
-        let url = &self.url;
+        let hash = &self.file.hash;
         let id = self.download_task.comic.id;
         let comic_title = &self.download_task.comic.title;
 
-        tracing::trace!(id, comic_title, url, "Image is pending");
+        tracing::trace!(id, comic_title, hash, "Image is pending");
 
         *permit = match permit.take() {
             // If there is a permit, use it directly
@@ -819,21 +884,21 @@ impl DownloadImgTask {
         permit: &mut Option<SemaphorePermit<'a>>,
         state_receiver: &mut watch::Receiver<DownloadTaskState>,
     ) -> ControlFlow<()> {
-        let url = &self.url;
+        let hash = &self.file.hash;
         let id = self.download_task.comic.id;
         let comic_title = &self.download_task.comic.title;
 
         let state = *state_receiver.borrow();
         match state {
             DownloadTaskState::Paused => {
-                tracing::trace!(id, comic_title, url, "Image is paused");
+                tracing::trace!(id, comic_title, hash, "Image is paused");
                 if let Some(permit) = permit.take() {
                     drop(permit);
                 }
                 ControlFlow::Continue(())
             }
             DownloadTaskState::Cancelled => {
-                tracing::trace!(id, comic_title, url, "Image is cancelled");
+                tracing::trace!(id, comic_title, hash, "Image is cancelled");
                 ControlFlow::Break(())
             }
             _ => ControlFlow::Continue(()),
@@ -943,5 +1008,78 @@ impl Comic {
         }
 
         Ok(comic_download_dir)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gallery_file(hasavif: i32) -> GalleryFiles {
+        GalleryFiles {
+            width: 1200,
+            hash: "0".repeat(64),
+            haswebp: 1,
+            hasavif,
+            hasjxl: 0,
+            name: "01.jpg".to_string(),
+            height: 1700,
+        }
+    }
+
+    #[test]
+    fn avif_falls_back_to_webp_when_unavailable() {
+        assert_eq!(
+            img_format_of(&gallery_file(0), DownloadFormat::Avif),
+            DownloadFormat::Webp
+        );
+        assert_eq!(
+            img_format_of(&gallery_file(1), DownloadFormat::Avif),
+            DownloadFormat::Avif
+        );
+        assert_eq!(
+            img_format_of(&gallery_file(1), DownloadFormat::Webp),
+            DownloadFormat::Webp
+        );
+    }
+
+    #[test]
+    fn part_file_is_not_a_page() {
+        use crate::extensions::PathIsImg;
+
+        let part_path = part_path_of(Path::new("/tmp/comic/0001.webp"));
+        assert_eq!(part_path, PathBuf::from("/tmp/comic/0001.webp.part"));
+        assert!(!part_path.is_img());
+    }
+
+    #[tokio::test]
+    async fn written_image_leaves_no_part_file() {
+        let dir = std::env::temp_dir().join(format!("hitomi-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let save_path = dir.join("0001.webp");
+
+        write_img(&save_path, b"image data").await.unwrap();
+
+        assert_eq!(std::fs::read(&save_path).unwrap(), b"image data");
+        assert!(!part_path_of(&save_path).exists());
+        assert_eq!(pages::collect_dir_pages(&dir).unwrap(), vec![save_path]);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn leftover_part_file_is_not_packed() {
+        let dir = std::env::temp_dir().join(format!("hitomi-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("0001.webp"), b"complete").unwrap();
+        // what an interrupted write leaves behind
+        std::fs::write(dir.join("0002.webp.part"), b"cut o").unwrap();
+
+        assert_eq!(
+            pages::collect_dir_pages(&dir).unwrap(),
+            vec![dir.join("0001.webp")]
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

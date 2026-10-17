@@ -39,7 +39,8 @@ impl GG {
         let request = client
             .read()
             .get("https://ltn.gold-usergeneratedcontent.net/gg.js");
-        let body = request.send().await?.text().await?;
+        // An error page must not be parsed, that would keep the stale values for another minute
+        let body = request.send().await?.error_for_status()?.text().await?;
 
         let re_default = Regex::new(r"var o = (\d)")?;
         let re_o = Regex::new(r"o = (\d); break;")?;
@@ -66,6 +67,20 @@ impl GG {
 
         self.last_retrieval = Some(Utc::now().timestamp_millis());
         Ok(())
+    }
+
+    /// Make the next lookup fetch `gg.js` again, unless it was fetched in the last few seconds
+    ///
+    /// Hitomi rotates the values in `gg.js`, so an image url built from an old copy points
+    /// at a path that no longer exists. Several images fail at once when that happens, the
+    /// grace period keeps them from fetching `gg.js` once each.
+    pub fn invalidate(&mut self) {
+        const GRACE_PERIOD_MILLIS: i64 = 5000;
+        if let Some(last_retrieval) = self.last_retrieval {
+            if last_retrieval + GRACE_PERIOD_MILLIS < Utc::now().timestamp_millis() {
+                self.last_retrieval = None;
+            }
+        }
     }
 
     pub async fn m(&mut self, g: i32) -> anyhow::Result<i32> {

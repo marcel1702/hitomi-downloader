@@ -263,8 +263,14 @@ pub(crate) async fn get_gallery_ids_from_nozomi(
 
     let request = client.read().get(&nozomi_address);
     let http_resp = request.send().await?;
-    if http_resp.status() != 200 {
+    let status = http_resp.status();
+    // A tag nobody used has no nozomi file, any other failure must not pass for "no results"
+    if status == StatusCode::NOT_FOUND {
         return Ok(IndexSet::new());
+    } else if status != StatusCode::OK {
+        return Err(anyhow!(
+            "Failed to get `{nozomi_address}`, the server answered with `{status}`"
+        ));
     }
 
     let bytes = http_resp.bytes().await?;

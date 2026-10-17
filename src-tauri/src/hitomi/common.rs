@@ -172,6 +172,11 @@ pub async fn url_from_url(
     Ok(res_url.into_owned())
 }
 
+/// Make the next image url be built from a freshly fetched `gg.js`
+pub async fn invalidate_gg() {
+    GG::inst().lock().await.invalidate();
+}
+
 pub async fn full_path_from_hash(hash: &str) -> anyhow::Result<String> {
     let mut gg = GG::inst().lock().await;
     let b = gg.b().await?;

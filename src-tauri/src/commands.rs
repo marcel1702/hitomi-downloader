@@ -534,14 +534,16 @@ pub async fn get_image_data(
         }
     }
 
-    // Fallback to network
-    let mut url = image_url_from_image(comic_id, &file, Ext::Avif)
-        .await
-        .map_err(|err| CommandError::from("Failed to get avif url", err))?;
-
-    let mut result = hitomi_client.get_img_data(&url).await;
+    // Fallback to network, preferring the smaller avif if the image is available as one
+    let mut result = Err(anyhow!("Image is not available as avif"));
+    if file.hasavif != 0 {
+        let url = image_url_from_image(comic_id, &file, Ext::Avif)
+            .await
+            .map_err(|err| CommandError::from("Failed to get avif url", err))?;
+        result = hitomi_client.get_img_data(&url).await;
+    }
     if result.is_err() {
-        url = image_url_from_image(comic_id, &file, Ext::Webp)
+        let url = image_url_from_image(comic_id, &file, Ext::Webp)
             .await
             .map_err(|err| CommandError::from("Failed to get webp url", err))?;
         result = hitomi_client.get_img_data(&url).await;
