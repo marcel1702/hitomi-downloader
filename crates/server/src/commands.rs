@@ -14,6 +14,7 @@ use serde::Deserialize;
 
 use crate::{
     error::{ApiError, ApiResult, Args},
+    paths,
     state::AppState,
 };
 
@@ -43,6 +44,25 @@ pub fn router() -> Router<AppState> {
         )
         .route("/get_cover_data", post(replaced_by_image_urls))
         .route("/get_image_data", post(replaced_by_image_urls))
+}
+
+/// `comic` with its download directory checked to lie inside the library
+///
+/// The comic comes from the client, and with it the directory an export reads from and
+/// writes next to.
+fn checked_comic(state: &AppState, mut comic: Comic) -> ApiResult<Comic> {
+    if let Some(dir) = comic.comic_download_dir.take() {
+        let library = state.context.config().read().download_dir.clone();
+        let dir = paths::rebased_within(&dir, &library).map_err(|err| {
+            ApiError::with_status(
+                StatusCode::FORBIDDEN,
+                "the comic is not in the library",
+                err,
+            )
+        })?;
+        comic.comic_download_dir = Some(dir);
+    }
+    Ok(comic)
 }
 
 /// Run blocking core work, a library scan or an export, off the async runtime
@@ -141,8 +161,10 @@ struct ComicArgs {
 
 async fn create_download_task(
     State(state): State<AppState>,
-    Args(ComicArgs { comic }): Args<ComicArgs>,
+    Args(ComicArgs { mut comic }): Args<ComicArgs>,
 ) -> ApiResult<Json<()>> {
+    // where the comic goes follows from the folder format, never from the client
+    comic.comic_download_dir = None;
     blocking(move || api::create_download_task(&state.context, comic)).await??;
     Ok(Json(()))
 }
@@ -193,8 +215,11 @@ async fn get_downloaded_comics(State(state): State<AppState>) -> ApiResult<Json<
 
 async fn get_synced_comic(
     State(state): State<AppState>,
-    Args(ComicArgs { comic }): Args<ComicArgs>,
+    Args(ComicArgs { mut comic }): Args<ComicArgs>,
 ) -> ApiResult<Json<Comic>> {
+    // looked up in the library afresh, the core would keep what the client sent otherwise
+    comic.comic_download_dir = None;
+    comic.is_downloaded = None;
     let context = state.context.clone();
     let comic = blocking(move || api::get_synced_comic(&context, comic)).await??;
     state.comics.insert(&comic);
@@ -205,6 +230,7 @@ async fn export_cbz(
     State(state): State<AppState>,
     Args(ComicArgs { comic }): Args<ComicArgs>,
 ) -> ApiResult<Json<()>> {
+    let comic = checked_comic(&state, comic)?;
     blocking(move || api::export_cbz(&state.context, comic)).await??;
     Ok(Json(()))
 }
@@ -213,6 +239,7 @@ async fn export_pdf(
     State(state): State<AppState>,
     Args(ComicArgs { comic }): Args<ComicArgs>,
 ) -> ApiResult<Json<()>> {
+    let comic = checked_comic(&state, comic)?;
     blocking(move || api::export_pdf(&state.context, comic)).await??;
     Ok(Json(()))
 }
