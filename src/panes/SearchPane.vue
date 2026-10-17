@@ -1,6 +1,6 @@
 <script setup lang="tsx">
 import { computed, nextTick, ref, watch } from 'vue'
-import { commands, Suggestion } from '../bindings.ts'
+import { commands, SearchSort, Suggestion } from '../bindings.ts'
 import { DropdownOption, SelectOption, useMessage, useNotification, NIcon } from 'naive-ui'
 import ComicCard from '../components/ComicCard.vue'
 import { useStore } from '../store.ts'
@@ -36,6 +36,22 @@ const {
 const searching = ref<boolean>(false)
 const downloadingAll = ref<boolean>(false)
 
+const sort = ref<SearchSort>('Date')
+const sortOptions = computed<SelectOption[]>(() => [
+  { label: t('search_pane.sort_date'), value: 'Date' },
+  { label: t('search_pane.sort_popular_today'), value: 'PopularToday' },
+  { label: t('search_pane.sort_popular_week'), value: 'PopularWeek' },
+  { label: t('search_pane.sort_popular_month'), value: 'PopularMonth' },
+  { label: t('search_pane.sort_popular_year'), value: 'PopularYear' },
+])
+
+// A new order means different results, so the shown search runs again from its first page
+watch(sort, async () => {
+  if (store.searchResult !== undefined) {
+    await search(searchInput.value.trim(), 1)
+  }
+})
+
 watch(
   () => store.searchResult,
   () => {
@@ -57,8 +73,7 @@ async function search(query: string, pageNum: number) {
   searching.value = true
   suggestionsShowing.value = false
 
-  // TODO: support sort by popularity
-  const result = await commands.search(query, pageNum, false)
+  const result = await commands.search(query, pageNum, sort.value)
   if (result.status === 'error') {
     console.error(result.error)
     searching.value = false
@@ -347,6 +362,7 @@ defineExpose({ search })
         :options="suggestionOptions"
         @select="onSuggestionSelect"
         @clickoutside="() => (suggestionsShowing = false)" />
+      <n-select class="w-36" size="small" v-model:value="sort" :options="sortOptions" :disabled="searching" />
       <n-button :loading="searching" type="primary" size="small" @click="search(searchInput.trim(), 1)">
         <template #icon>
           <n-icon size="22">

@@ -13,9 +13,36 @@ use crate::{
     config::Config,
     extensions::AnyhowErrorToStringChain,
     hitomi::{self, Suggestion},
-    types::{Comic, SearchResult},
+    types::{Comic, SearchResult, SearchSort},
     utils::get_app_handle,
 };
+
+/// Time allowed to establish a connection for an api request
+const API_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Time an api response may stall between two reads
+const API_READ_TIMEOUT: Duration = Duration::from_secs(15);
+/// Time allowed to establish a connection for an image request
+const IMG_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Time an image response may stall between two reads
+///
+/// Without it a connection that stops sending holds its download slot forever,
+/// and the retries never get a chance to run.
+const IMG_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The server answered an image request with a status other than `200 OK`
+#[derive(Debug)]
+pub struct UnexpectedStatus {
+    pub status: StatusCode,
+    pub body: String,
+}
+
+impl std::fmt::Display for UnexpectedStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unexpected status code({}): {}", self.status, self.body)
+    }
+}
+
+impl std::error::Error for UnexpectedStatus {}
 
 #[derive(Clone)]
 pub struct HitomiClient {
@@ -51,6 +78,10 @@ impl HitomiClient {
     }
 
     pub fn reload_client(&self) {
+        // Versions fetched over the old route, or the failure to fetch them, say nothing
+        // about the new one
+        hitomi::invalidate_index_versions();
+
         let api_client = create_api_client(&self.app);
         *self.api_client.write() = api_client;
 
@@ -65,9 +96,9 @@ impl HitomiClient {
         &self,
         query: &str,
         page_num: usize,
-        sort_by_popularity: bool,
+        sort: SearchSort,
     ) -> anyhow::Result<SearchResult> {
-        let ids = hitomi::do_search(query.to_string(), sort_by_popularity).await?;
+        let ids = hitomi::do_search(query.to_string(), sort).await?;
 
         let search_result = self.get_page(ids.into_iter().collect(), page_num).await?;
 
@@ -120,7 +151,7 @@ impl HitomiClient {
             return Err(anyhow!("Failed after multiple retries, try again later"));
         } else if status != StatusCode::OK {
             let body = http_resp.text().await?;
-            return Err(anyhow!("Unexpected status code({status}): {body}"));
+            return Err(UnexpectedStatus { status, body }.into());
         }
         // get image data
         let img_data = http_resp.bytes().await?;
@@ -158,7 +189,10 @@ fn create_api_client(app: &AppHandle) -> ClientWithMiddleware {
 
     let client = reqwest::ClientBuilder::new()
         .set_proxy(app, "api_client")
-        .timeout(Duration::from_secs(3))
+        // No limit on the whole request: the nozomi index files are several megabytes,
+        // which a slow line or a proxy can not deliver in a few seconds
+        .connect_timeout(API_CONNECT_TIMEOUT)
+        .read_timeout(API_READ_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap();
@@ -176,6 +210,8 @@ fn create_img_client(app: &AppHandle) -> ClientWithMiddleware {
 
     let client = reqwest::ClientBuilder::new()
         .set_proxy(app, "img_client")
+        .connect_timeout(IMG_CONNECT_TIMEOUT)
+        .read_timeout(IMG_READ_TIMEOUT)
         .build()
         .unwrap();
 
@@ -187,6 +223,8 @@ fn create_img_client(app: &AppHandle) -> ClientWithMiddleware {
 fn create_cover_client(app: &AppHandle) -> Client {
     reqwest::ClientBuilder::new()
         .set_proxy(app, "cover_client")
+        .connect_timeout(IMG_CONNECT_TIMEOUT)
+        .read_timeout(IMG_READ_TIMEOUT)
         .build()
         .unwrap()
 }

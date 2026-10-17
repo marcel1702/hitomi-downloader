@@ -66,6 +66,10 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --locked
+
       - name: Check
         working-directory: src-tauri
         run: cargo check --locked

@@ -3,10 +3,13 @@ import { useStore } from '../store.ts'
 import { Comic, commands } from '../bindings.ts'
 import { computed, watch, ref, nextTick } from 'vue'
 import { useI18n } from '../utils.ts'
+import { useMessage } from 'naive-ui'
 import DownloadButton from '../components/DownloadButton.vue'
 import ComicCard from '../components/ComicCard.vue'
 
 const { t } = useI18n()
+
+const message = useMessage()
 
 defineProps<{
   search: (query: string, pageNum: number) => Promise<void>
@@ -74,7 +77,8 @@ async function showComicDownloadDirInFileManager() {
 
   const comicDownloadDir = store.pickedComic.comicDownloadDir
   if (comicDownloadDir === undefined || comicDownloadDir === null) {
-    console.error('Comic download directory is undefined or null')
+    // No backend call failed here, so nothing else would tell the user why the click did nothing
+    message.warning(() => t('comic_pane.no_download_dir'))
     return
   }
 

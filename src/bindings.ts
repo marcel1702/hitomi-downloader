@@ -24,16 +24,12 @@ export const commands = {
   async search(
     query: string,
     pageNum: number,
-    sortByPopularity: boolean,
+    sort: SearchSort,
   ): Promise<Result<SearchResult, CommandError>> {
     try {
       return {
         status: "ok",
-        data: await TAURI_INVOKE("search", {
-          query,
-          pageNum,
-          sortByPopularity,
-        }),
+        data: await TAURI_INVOKE("search", { query, pageNum, sort }),
       };
     } catch (e) {
       if (e instanceof Error) throw e;
@@ -304,6 +300,8 @@ export type Config = {
   downloadFormat: DownloadFormat;
   dirFmt: string;
   proxy: ProxyConfig;
+  comicConcurrency: number;
+  imgConcurrency: number;
   language: string;
 };
 export type DownloadFormat = "Webp" | "Avif";
@@ -372,6 +370,9 @@ export type LogEvent = {
   line_number: number;
 };
 export type LogLevel = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
+/**
+ * Connection settings for the optional SOCKS5 proxy all requests are routed through
+ */
 export type ProxyConfig = {
   enabled: boolean;
   host: string;
@@ -389,6 +390,14 @@ export type SearchResult = {
   totalPage: number;
   ids: number[];
 };
+/**
+ * The order search results are listed in
+ */
+export type SearchSort =
+  /**
+   * Newest first
+   */
+  "Date" | "PopularToday" | "PopularWeek" | "PopularMonth" | "PopularYear";
 export type Suggestion = { s: string; t: number; u: string; n: string };
 export type Tag = { tag: string; female: number; male: number };
 

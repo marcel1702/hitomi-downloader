@@ -19,7 +19,7 @@ use crate::{
     hitomi_client::HitomiClient,
     logger,
     pages::PageSource,
-    types::{Comic, SearchResult},
+    types::{Comic, SearchResult, SearchSort},
     TrayMenuItems,
 };
 
@@ -44,6 +44,7 @@ pub fn get_config(config: State<RwLock<Config>>) -> Config {
 pub fn save_config(
     app: AppHandle,
     hitomi_client: State<HitomiClient>,
+    download_manager: State<DownloadManager>,
     config_state: State<RwLock<Config>>,
     config: Config,
 ) -> CommandResult<()> {
@@ -53,8 +54,16 @@ pub fn save_config(
             .to_url()
             .map_err(|err| CommandError::from("invalid proxy config", err))?;
     }
+    config
+        .validate_concurrency()
+        .map_err(|err| CommandError::from("invalid concurrency config", err))?;
 
     let proxy_changed = config_state.read().proxy != config.proxy;
+    let concurrency = (config.comic_concurrency, config.img_concurrency);
+    let concurrency_changed = {
+        let config_state = config_state.read();
+        (config_state.comic_concurrency, config_state.img_concurrency) != concurrency
+    };
 
     let enable_file_logger = config.enable_file_logger;
     let enable_file_logger_changed = config_state
@@ -76,6 +85,11 @@ pub fn save_config(
         hitomi_client.reload_client();
     }
 
+    if concurrency_changed {
+        let (comic_concurrency, img_concurrency) = concurrency;
+        download_manager.set_concurrency(comic_concurrency, img_concurrency);
+    }
+
     if enable_file_logger_changed {
         if enable_file_logger {
             logger::reload_file_logger()
@@ -95,10 +109,10 @@ pub async fn search(
     hitomi_client: State<'_, HitomiClient>,
     query: &str,
     page_num: usize,
-    sort_by_popularity: bool,
+    sort: SearchSort,
 ) -> CommandResult<SearchResult> {
     let search_result = hitomi_client
-        .search(query, page_num, sort_by_popularity)
+        .search(query, page_num, sort)
         .await
         .map_err(|err| CommandError::from("search failed", err))?;
     tracing::debug!("search success");
@@ -534,14 +548,16 @@ pub async fn get_image_data(
         }
     }
 
-    // Fallback to network
-    let mut url = image_url_from_image(comic_id, &file, Ext::Avif)
-        .await
-        .map_err(|err| CommandError::from("Failed to get avif url", err))?;
-
-    let mut result = hitomi_client.get_img_data(&url).await;
+    // Fallback to network, preferring the smaller avif if the image is available as one
+    let mut result = Err(anyhow!("Image is not available as avif"));
+    if file.hasavif != 0 {
+        let url = image_url_from_image(comic_id, &file, Ext::Avif)
+            .await
+            .map_err(|err| CommandError::from("Failed to get avif url", err))?;
+        result = hitomi_client.get_img_data(&url).await;
+    }
     if result.is_err() {
-        url = image_url_from_image(comic_id, &file, Ext::Webp)
+        let url = image_url_from_image(comic_id, &file, Ext::Webp)
             .await
             .map_err(|err| CommandError::from("Failed to get webp url", err))?;
         result = hitomi_client.get_img_data(&url).await;

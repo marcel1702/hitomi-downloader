@@ -20,7 +20,6 @@
   },
   "app_content": {
     "save_config_success": "Einstellungen gespeichert",
-    "save_config_failed": "Einstellungen konnten nicht gespeichert werden",
     "logs_directory_size_too_big": "Log-Ordner überschreitet 50 MB",
     "log_cleanup_reminder": "Bitte räume die Log-Dateien bald auf",
     "click_top_center": "Klicke oben in der Mitte auf",
@@ -56,6 +55,8 @@
     "proxy_password": "Passwort (optional)",
     "proxy_remote_dns": "DNS über Proxy auflösen",
     "proxy_remote_dns_tip": "Hostnamen werden vom Proxy aufgelöst (socks5h), sodass keine DNS-Anfrage direkt von deinem Rechner ausgeht",
+    "comic_concurrency": "Comics gleichzeitig",
+    "img_concurrency": "Bilder gleichzeitig",
     "open_config_directory": "Konfigurationsordner öffnen",
     "directory_format": {
       "name": "Ordnerformat",
@@ -83,7 +84,12 @@
     "download_all": "Alle herunterladen",
     "download_all_started": "{count} Comics werden zum Download eingereiht …",
     "download_all_queued": "{count} Comics zum Download eingereiht",
-    "download_all_failed": "Downloads konnten nicht eingereiht werden"
+    "download_all_failed": "Downloads konnten nicht eingereiht werden",
+    "sort_date": "Neueste",
+    "sort_popular_today": "Beliebt: heute",
+    "sort_popular_week": "Beliebt: Woche",
+    "sort_popular_month": "Beliebt: Monat",
+    "sort_popular_year": "Beliebt: Jahr"
   },
   "downloaded_pane": {
     "name": "Lokal",
@@ -104,7 +110,8 @@
     "other_language": "Andere Sprachen",
     "empty_description": "Bitte wähle einen Comic aus (@:search_pane.name @:downloaded_pane.name)",
     "related": "Ähnliche Comics",
-    "read": "Lesen"
+    "read": "Lesen",
+    "no_download_dir": "Für diesen Comic ist kein Download-Ordner bekannt"
   },
   "reader_pane": {
     "name": "Leser",
