@@ -722,6 +722,20 @@ fn is_stale_url_error(err: &anyhow::Error) -> bool {
         .is_some_and(|err| matches!(err.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND))
 }
 
+/// How often an image whose transfer broke off is downloaded again before it counts as failed
+const TRANSFER_RETRIES: u32 = 3;
+
+/// Check if `err` says the transfer of the image body broke off, as opposed to the server
+/// refusing it
+///
+/// Failures before the response headers are left out, the retry middleware already tried
+/// those again.
+fn is_interrupted_transfer_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .filter_map(|cause| cause.downcast_ref::<reqwest::Error>())
+        .any(|err| err.is_body() || err.is_decode())
+}
+
 /// Path an image is written to before it is renamed to `save_path`
 ///
 /// Only a completely written image ever carries its final name, so an image cut off by a
@@ -862,13 +876,39 @@ impl DownloadImgTask {
         self.download_task.emit_download_task_update_event();
     }
 
+    /// Download the image, starting over when the transfer breaks off midway
+    ///
+    /// The retry middleware of the client only covers the request up to the response headers.
+    /// A body that stalls past the read timeout, common through a proxy, would otherwise fail
+    /// the image at once, and with it the whole comic.
+    async fn fetch_img_data(&self) -> anyhow::Result<Bytes> {
+        let mut attempt = 0;
+        loop {
+            match self.fetch_img_data_once().await {
+                Ok(img_data) => return Ok(img_data),
+                Err(err) if attempt < TRANSFER_RETRIES && is_interrupted_transfer_error(&err) => {
+                    attempt += 1;
+                    let delay = Duration::from_secs(1 << (attempt - 1));
+                    tracing::debug!(
+                        hash = self.file.hash,
+                        attempt,
+                        "Image transfer broke off, trying again in {delay:?}: {}",
+                        err.to_string_chain()
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
     /// Download the image, building its url right before the request
     ///
     /// The url depends on `gg.js`, which Hitomi rotates. A url built when the comic was
     /// queued can be stale by the time the image is downloaded, above all after a pause.
     /// If the server says the image is not there, the url is built once more from a fresh
     /// `gg.js` before giving up.
-    async fn fetch_img_data(&self) -> anyhow::Result<Bytes> {
+    async fn fetch_img_data_once(&self) -> anyhow::Result<Bytes> {
         let hitomi_client = self.hitomi_client();
         let url = self.img_url().await?;
         let err = match hitomi_client.get_img_data(&url).await {
@@ -1174,6 +1214,56 @@ mod tests {
             StatusCode::TOO_MANY_REQUESTS
         )));
         assert!(!is_stale_url_error(&anyhow!("connection reset")));
+    }
+
+    #[tokio::test]
+    async fn stalled_body_counts_as_interrupted_transfer() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // sends the headers and part of the body, then stops sending without closing
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\npartial")
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .read_timeout(Duration::from_millis(200))
+            .build()
+            .unwrap();
+        let resp = client.get(format!("http://{addr}/")).send().await.unwrap();
+        let err =
+            anyhow::Error::from(resp.bytes().await.unwrap_err()).context("Failed to download");
+
+        assert!(is_interrupted_transfer_error(&err));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn failures_before_the_body_are_no_interrupted_transfer() {
+        // nothing listens on port 1, the connection is refused
+        let err = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .unwrap_err();
+
+        assert!(!is_interrupted_transfer_error(&err.into()));
+        assert!(!is_interrupted_transfer_error(&status_error(
+            StatusCode::NOT_FOUND
+        )));
+        assert!(!is_interrupted_transfer_error(&anyhow!("connection reset")));
     }
 
     #[test]
