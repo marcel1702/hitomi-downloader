@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    future::Future,
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
@@ -46,6 +47,10 @@ pub struct DownloadManager {
     app: AppHandle,
     comic_sem: Arc<Semaphore>,
     img_sem: Arc<Semaphore>,
+    /// The number of permits `comic_sem` is meant to hold, the permits it currently has
+    /// available say nothing about that while downloads hold some of them
+    comic_limit: Arc<AtomicU32>,
+    img_limit: Arc<AtomicU32>,
     byte_per_sec: Arc<AtomicU64>,
     download_tasks: Arc<RwLock<HashMap<i32, DownloadTask>>>,
 }
@@ -62,10 +67,17 @@ pub enum DownloadTaskState {
 
 impl DownloadManager {
     pub fn new(app: &AppHandle) -> Self {
+        let (comic_concurrency, img_concurrency) = {
+            let config = app.state::<RwLock<Config>>();
+            let config = config.read();
+            (config.comic_concurrency, config.img_concurrency)
+        };
         let manager = DownloadManager {
             app: app.clone(),
-            comic_sem: Arc::new(Semaphore::new(2)),
-            img_sem: Arc::new(Semaphore::new(4)),
+            comic_sem: Arc::new(Semaphore::new(comic_concurrency as usize)),
+            img_sem: Arc::new(Semaphore::new(img_concurrency as usize)),
+            comic_limit: Arc::new(AtomicU32::new(comic_concurrency)),
+            img_limit: Arc::new(AtomicU32::new(img_concurrency)),
             byte_per_sec: Arc::new(AtomicU64::new(0)),
             download_tasks: Arc::new(RwLock::new(HashMap::new())),
         };
@@ -136,6 +148,24 @@ impl DownloadManager {
         Ok(())
     }
 
+    /// Change how many comics and images may download at the same time
+    ///
+    /// Running downloads are never interrupted. A lower limit takes effect as they finish.
+    pub fn set_concurrency(&self, comic_concurrency: u32, img_concurrency: u32) {
+        let shrinks = [
+            resize_semaphore(&self.comic_sem, &self.comic_limit, comic_concurrency),
+            resize_semaphore(&self.img_sem, &self.img_limit, img_concurrency),
+        ];
+        for shrink in shrinks.into_iter().flatten() {
+            tauri::async_runtime::spawn(shrink);
+        }
+        tracing::debug!(
+            comic_concurrency,
+            img_concurrency,
+            "Changed download concurrency"
+        );
+    }
+
     #[allow(clippy::cast_precision_loss)]
     async fn emit_download_speed_loop(self) {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -149,6 +179,33 @@ impl DownloadManager {
             let _ = DownloadSpeedEvent { speed }.emit(&self.app);
         }
     }
+}
+
+/// Make `sem` hold `new_limit` permits, where `limit` tracks how many it is meant to hold
+///
+/// Growing takes effect at once. Permits held by running downloads can not be taken back,
+/// so shrinking returns a future that waits for enough of them to be released and then
+/// retires them for good. Until then a semaphore that is fair, as tokio's is, already lets
+/// no new download start ahead of that future.
+fn resize_semaphore(
+    sem: &Arc<Semaphore>,
+    limit: &AtomicU32,
+    new_limit: u32,
+) -> Option<impl Future<Output = ()> + Send + 'static> {
+    let old_limit = limit.swap(new_limit, Ordering::Relaxed);
+    if new_limit >= old_limit {
+        sem.add_permits((new_limit - old_limit) as usize);
+        return None;
+    }
+
+    let sem = sem.clone();
+    let surplus = old_limit - new_limit;
+    Some(async move {
+        // Only fails once the semaphore is closed, which never happens
+        if let Ok(permits) = sem.acquire_many_owned(surplus).await {
+            permits.forget();
+        }
+    })
 }
 
 #[derive(Clone)]
@@ -1017,6 +1074,51 @@ impl Comic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn growing_adds_permits_at_once() {
+        let sem = Arc::new(Semaphore::new(2));
+        let limit = AtomicU32::new(2);
+
+        assert!(resize_semaphore(&sem, &limit, 5).is_none());
+
+        assert_eq!(sem.available_permits(), 5);
+        assert_eq!(limit.load(Ordering::Relaxed), 5);
+    }
+
+    #[tokio::test]
+    async fn shrinking_waits_for_running_downloads() {
+        let sem = Arc::new(Semaphore::new(5));
+        let limit = AtomicU32::new(5);
+        // three downloads are running
+        let running = sem.clone().acquire_many_owned(3).await.unwrap();
+
+        let shrink = resize_semaphore(&sem, &limit, 2).expect("shrinking needs to wait");
+        let shrink = tokio::spawn(shrink);
+        tokio::task::yield_now().await;
+        // the two idle permits went to the shrink at once, no new download may start
+        assert_eq!(sem.available_permits(), 0);
+        assert!(!shrink.is_finished());
+
+        drop(running);
+        shrink.await.unwrap();
+        assert_eq!(sem.available_permits(), 2);
+        assert_eq!(limit.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn growing_while_a_shrink_waits_ends_at_the_last_limit() {
+        let sem = Arc::new(Semaphore::new(5));
+        let limit = AtomicU32::new(5);
+        let running = sem.clone().acquire_many_owned(5).await.unwrap();
+
+        let shrink = tokio::spawn(resize_semaphore(&sem, &limit, 2).unwrap());
+        assert!(resize_semaphore(&sem, &limit, 4).is_none());
+
+        drop(running);
+        shrink.await.unwrap();
+        assert_eq!(sem.available_permits(), 4);
+    }
 
     fn gallery_file(hasavif: i32) -> GalleryFiles {
         GalleryFiles {

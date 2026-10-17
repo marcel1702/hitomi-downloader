@@ -56,6 +56,8 @@
     "proxy_password": "Password (optional)",
     "proxy_remote_dns": "Resolve DNS via proxy",
     "proxy_remote_dns_tip": "Hostnames are resolved by the proxy (socks5h), so no DNS query leaves your machine directly",
+    "comic_concurrency": "Comics at once",
+    "img_concurrency": "Images at once",
     "open_config_directory": "Open Config Folder",
     "directory_format": {
       "name": "Folder Format",

@@ -1,5 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+};
 
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Manager};
@@ -14,6 +18,13 @@ const SUPPORTED_LANGUAGES: [&str; 2] = ["en-US", "de-DE"];
 /// The language the interface uses unless the user picks another one
 const DEFAULT_LANGUAGE: &str = "en-US";
 
+/// How many comics may download at the same time
+///
+/// Kept low, Hitomi throttles clients that open too many connections.
+pub const COMIC_CONCURRENCY_RANGE: RangeInclusive<u32> = 1..=8;
+/// How many images may download at the same time, across all comics
+pub const IMG_CONCURRENCY_RANGE: RangeInclusive<u32> = 1..=16;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
@@ -23,6 +34,8 @@ pub struct Config {
     pub download_format: DownloadFormat,
     pub dir_fmt: String,
     pub proxy: ProxyConfig,
+    pub comic_concurrency: u32,
+    pub img_concurrency: u32,
     pub language: String,
 }
 
@@ -49,8 +62,43 @@ impl Config {
         if !SUPPORTED_LANGUAGES.contains(&config.language.as_str()) {
             config.language = DEFAULT_LANGUAGE.to_string();
         }
+        config.clamp_concurrency();
         config.save(app)?;
         Ok(config)
+    }
+
+    /// Check that the concurrency limits lie in their allowed ranges
+    pub fn validate_concurrency(&self) -> anyhow::Result<()> {
+        let comic_range = COMIC_CONCURRENCY_RANGE;
+        if !comic_range.contains(&self.comic_concurrency) {
+            return Err(anyhow!(
+                "the number of comics downloading at once must be between {} and {}",
+                comic_range.start(),
+                comic_range.end()
+            ));
+        }
+        let img_range = IMG_CONCURRENCY_RANGE;
+        if !img_range.contains(&self.img_concurrency) {
+            return Err(anyhow!(
+                "the number of images downloading at once must be between {} and {}",
+                img_range.start(),
+                img_range.end()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Pull concurrency limits from a hand edited config file back into their ranges
+    ///
+    /// A limit of 0 would never let a download start.
+    fn clamp_concurrency(&mut self) {
+        self.comic_concurrency = self.comic_concurrency.clamp(
+            *COMIC_CONCURRENCY_RANGE.start(),
+            *COMIC_CONCURRENCY_RANGE.end(),
+        );
+        self.img_concurrency = self
+            .img_concurrency
+            .clamp(*IMG_CONCURRENCY_RANGE.start(), *IMG_CONCURRENCY_RANGE.end());
     }
 
     pub fn save(&self, app: &AppHandle) -> anyhow::Result<()> {
@@ -91,6 +139,8 @@ impl Config {
             download_format: DownloadFormat::Webp,
             dir_fmt: "{title} - {id}".to_string(),
             proxy: ProxyConfig::default(),
+            comic_concurrency: 2,
+            img_concurrency: 4,
             language: DEFAULT_LANGUAGE.to_string(),
         }
     }
@@ -122,5 +172,38 @@ mod tests {
 
         let saved = serde_json::to_value(&config).unwrap();
         assert!(saved.get("proxyMode").is_none());
+    }
+
+    #[test]
+    fn config_without_concurrency_gets_the_defaults() {
+        let older = r#"{
+            "downloadDir": "/comics",
+            "exportDir": "/exports",
+            "enableFileLogger": true,
+            "downloadFormat": "Webp",
+            "dirFmt": "{id}",
+            "proxy": {
+                "enabled": false, "host": "127.0.0.1", "port": 1080,
+                "username": "", "password": "", "remoteDns": true
+            },
+            "language": "en-US"
+        }"#;
+        let config = Config::merge_config(older, Path::new("/app-data"));
+        assert_eq!(config.download_dir, PathBuf::from("/comics"));
+        assert_eq!((config.comic_concurrency, config.img_concurrency), (2, 4));
+    }
+
+    #[test]
+    fn concurrency_out_of_range_is_rejected_and_clamped() {
+        let mut config = Config::default(Path::new("/app-data"));
+        assert!(config.validate_concurrency().is_ok());
+
+        config.comic_concurrency = 0;
+        config.img_concurrency = 99;
+        assert!(config.validate_concurrency().is_err());
+
+        config.clamp_concurrency();
+        assert_eq!((config.comic_concurrency, config.img_concurrency), (1, 16));
+        assert!(config.validate_concurrency().is_ok());
     }
 }

@@ -44,6 +44,7 @@ pub fn get_config(config: State<RwLock<Config>>) -> Config {
 pub fn save_config(
     app: AppHandle,
     hitomi_client: State<HitomiClient>,
+    download_manager: State<DownloadManager>,
     config_state: State<RwLock<Config>>,
     config: Config,
 ) -> CommandResult<()> {
@@ -53,8 +54,16 @@ pub fn save_config(
             .to_url()
             .map_err(|err| CommandError::from("invalid proxy config", err))?;
     }
+    config
+        .validate_concurrency()
+        .map_err(|err| CommandError::from("invalid concurrency config", err))?;
 
     let proxy_changed = config_state.read().proxy != config.proxy;
+    let concurrency = (config.comic_concurrency, config.img_concurrency);
+    let concurrency_changed = {
+        let config_state = config_state.read();
+        (config_state.comic_concurrency, config_state.img_concurrency) != concurrency
+    };
 
     let enable_file_logger = config.enable_file_logger;
     let enable_file_logger_changed = config_state
@@ -74,6 +83,11 @@ pub fn save_config(
 
     if proxy_changed {
         hitomi_client.reload_client();
+    }
+
+    if concurrency_changed {
+        let (comic_concurrency, img_concurrency) = concurrency;
+        download_manager.set_concurrency(comic_concurrency, img_concurrency);
     }
 
     if enable_file_logger_changed {

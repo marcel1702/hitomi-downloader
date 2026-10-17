@@ -304,6 +304,8 @@ export type Config = {
   downloadFormat: DownloadFormat;
   dirFmt: string;
   proxy: ProxyConfig;
+  comicConcurrency: number;
+  imgConcurrency: number;
   language: string;
 };
 export type DownloadFormat = "Webp" | "Avif";
@@ -372,6 +374,9 @@ export type LogEvent = {
   line_number: number;
 };
 export type LogLevel = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
+/**
+ * Connection settings for the optional SOCKS5 proxy all requests are routed through
+ */
 export type ProxyConfig = {
   enabled: boolean;
   host: string;

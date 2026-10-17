@@ -56,6 +56,8 @@
     "proxy_password": "Passwort (optional)",
     "proxy_remote_dns": "DNS über Proxy auflösen",
     "proxy_remote_dns_tip": "Hostnamen werden vom Proxy aufgelöst (socks5h), sodass keine DNS-Anfrage direkt von deinem Rechner ausgeht",
+    "comic_concurrency": "Comics gleichzeitig",
+    "img_concurrency": "Bilder gleichzeitig",
     "open_config_directory": "Konfigurationsordner öffnen",
     "directory_format": {
       "name": "Ordnerformat",

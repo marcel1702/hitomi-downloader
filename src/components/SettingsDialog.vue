@@ -36,6 +36,23 @@ function updateProxyPort(port: number | null) {
   }
 }
 
+// kept in step with COMIC_CONCURRENCY_RANGE and IMG_CONCURRENCY_RANGE in config.rs
+const MAX_COMIC_CONCURRENCY = 8
+const MAX_IMG_CONCURRENCY = 16
+
+function updateComicConcurrency(value: number | null) {
+  // a cleared field keeps the last limit, the same as the proxy port
+  if (store.config !== undefined && value !== null) {
+    store.config.comicConcurrency = value
+  }
+}
+
+function updateImgConcurrency(value: number | null) {
+  if (store.config !== undefined && value !== null) {
+    store.config.imgConcurrency = value
+  }
+}
+
 async function showConfigInFileManager() {
   const configName = 'config.json'
   const configPath = await path.join(await appDataDir(), configName)
@@ -60,6 +77,28 @@ async function showConfigInFileManager() {
             </template>
           </n-tooltip>
         </n-radio-group>
+        <div class="flex gap-2">
+          <n-input-group>
+            <n-input-group-label size="small">{{ t('settings_dialog.comic_concurrency') }}</n-input-group-label>
+            <n-input-number
+              :value="store.config.comicConcurrency"
+              @update:value="updateComicConcurrency"
+              size="small"
+              :min="1"
+              :max="MAX_COMIC_CONCURRENCY"
+              :parse="(x: string) => parseInt(x)" />
+          </n-input-group>
+          <n-input-group>
+            <n-input-group-label size="small">{{ t('settings_dialog.img_concurrency') }}</n-input-group-label>
+            <n-input-number
+              :value="store.config.imgConcurrency"
+              @update:value="updateImgConcurrency"
+              size="small"
+              :min="1"
+              :max="MAX_IMG_CONCURRENCY"
+              :parse="(x: string) => parseInt(x)" />
+          </n-input-group>
+        </div>
         <div class="flex items-center gap-2">
           <span>{{ t('settings_dialog.socks5_proxy') }}</span>
           <n-switch v-model:value="store.config.proxy.enabled" size="small" />
