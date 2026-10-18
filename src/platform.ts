@@ -15,6 +15,31 @@ export function pageUrl(comicId: number, index: number): string {
   return `/api/comics/${comicId}/pages/${index}`
 }
 
+/** A comic as a file of `format`, built or served by the server for the browser to save */
+export function downloadUrl(comicId: number, format: 'cbz' | 'pdf'): string {
+  return `/api/comics/${comicId}/download/${format}`
+}
+
+/** How long a download may take to start, a PDF is built before the first byte is sent */
+const DOWNLOAD_FRAME_LIFETIME_MS = 10 * 60 * 1000
+
+/**
+ * Let the browser save the file at `url`
+ *
+ * The file is loaded into a hidden frame, which the browser turns into a download because the
+ * server marks it as an attachment. A link would do the same, but a failure of the server,
+ * which answers with an error in place of the file, would then replace the whole page. Here it
+ * only lands in the invisible frame, and the user sees it as the notification the server's
+ * log event raises, as with every other error.
+ */
+export function startBrowserDownload(url: string) {
+  const frame = document.createElement('iframe')
+  frame.hidden = true
+  frame.src = url
+  document.body.appendChild(frame)
+  setTimeout(() => frame.remove(), DOWNLOAD_FRAME_LIFETIME_MS)
+}
+
 /**
  * Put `text` on the clipboard, `false` if the browser does not allow it
  *

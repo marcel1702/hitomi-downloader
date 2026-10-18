@@ -5,6 +5,7 @@ import { useStore } from '../store.ts'
 import { useI18n } from '../utils.ts'
 import DownloadButton from './DownloadButton.vue'
 import { useRevealPath } from '../composables/useRevealPath.ts'
+import { downloadUrl, isWeb, startBrowserDownload } from '../platform.ts'
 
 const { t } = useI18n()
 
@@ -44,12 +45,23 @@ async function showComicDownloadDirInFileManager() {
   await revealPath(comicDownloadDir)
 }
 
+// The desktop app exports into the export folder, the web version hands the file to the
+// browser, which saves it where the user sits. Writing into the folder on the server is the
+// context menu and "Export All" of the local tab.
 async function exportPdf() {
+  if (isWeb) {
+    startBrowserDownload(downloadUrl(props.comic.id, 'pdf'))
+    return
+  }
   const result = await commands.exportPdf(props.comic)
   if (result.status === 'error') console.error(result.error)
 }
 
 async function exportCbz() {
+  if (isWeb) {
+    startBrowserDownload(downloadUrl(props.comic.id, 'cbz'))
+    return
+  }
   const result = await commands.exportCbz(props.comic)
   if (result.status === 'error') console.error(result.error)
 }
@@ -141,10 +153,10 @@ function tagNs(female: number, male: number): string {
           </n-button>
           <template v-if="showExport && isDownloaded">
             <n-button type="primary" class="ml-auto" size="tiny" @click="exportPdf">
-              {{ t('common.export_pdf') }}
+              {{ isWeb ? t('common.download_pdf') : t('common.export_pdf') }}
             </n-button>
             <n-button type="primary" size="tiny" @click="exportCbz">
-              {{ t('common.export_cbz') }}
+              {{ isWeb ? t('common.download_cbz') : t('common.export_cbz') }}
             </n-button>
           </template>
           <download-button
