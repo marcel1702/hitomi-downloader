@@ -1055,7 +1055,7 @@ impl Comic {
             id: self.id,
             // Shortened here rather than only when the whole directory name is clamped,
             // so that what follows the title in the format string survives. With the
-            // default format that is the language, with a format that has it the id.
+            // default format that is the id and the language.
             title: crate::utils::truncate_title(&self.title),
             language: self.language.clone(),
             language_localname: self.language_localname.clone(),
@@ -1380,22 +1380,42 @@ mod tests {
         })
     }
 
-    #[test]
-    fn the_default_folder_format_names_artists_title_and_language() {
+    /// The directory the default folder format gives for a comic with `artists`
+    fn default_dir_of(artists: &[&str]) -> PathBuf {
         let (context, _) = test_context();
         let mut comic = Comic {
             id: 7,
             title: "A Title".to_string(),
             language: "english".to_string(),
-            artists: vec!["one".to_string(), "two".to_string()],
+            artists: artists.iter().map(ToString::to_string).collect(),
             ..Comic::default()
         };
         comic.update_dir_name_fields_by_fmt(context).unwrap();
-        let dir = comic.comic_download_dir.unwrap();
+        let library = context.config().read().download_dir.clone();
+        comic
+            .comic_download_dir
+            .unwrap()
+            .strip_prefix(library)
+            .unwrap()
+            .to_path_buf()
+    }
+
+    #[test]
+    fn the_default_folder_format_puts_a_comic_in_the_folder_of_its_artists() {
         assert_eq!(
-            dir.file_name().unwrap().to_str().unwrap(),
-            "[one, two] A Title - english"
+            default_dir_of(&["one", "two"]),
+            PathBuf::from("one, two").join("A Title (7) - english")
         );
+        assert_eq!(
+            default_dir_of(&["one"]),
+            PathBuf::from("one").join("A Title (7) - english")
+        );
+    }
+
+    #[test]
+    fn a_comic_without_artists_goes_into_the_library_itself() {
+        // the empty folder name is left out, there is no `[]` or empty level
+        assert_eq!(default_dir_of(&[]), PathBuf::from("A Title (7) - english"));
     }
 
     /// A task for the comic `id` whose archive goes to `library/<name>`

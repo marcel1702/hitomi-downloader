@@ -48,8 +48,8 @@ const RESERVED_AFFIX_BYTES: usize = ".downloading-".len();
 
 /// Room kept free after the title for the rest of what a folder format puts in a name
 ///
-/// The language of the comic (` - english`), or its id (` - 1234567` is 10 bytes), the rest is
-/// room for a type. 62 bytes leave a title of 180 bytes in the 255 byte limit.
+/// The id and the language of the comic (` (1234567) - english` is 20 bytes), the rest is room
+/// for a type. 62 bytes leave a title of 180 bytes in the 255 byte limit.
 const RESERVED_AFTER_TITLE_BYTES: usize = 62;
 
 /// Byte budget for a directory name built from `dir_fmt`, with names limited to `limit` bytes
