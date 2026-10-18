@@ -22,6 +22,8 @@ export default defineConfig([
   },
   { files: ['**/*.{js,mjs,cjs,ts,vue}'], plugins: { js }, extends: ['js/recommended'] },
   { files: ['**/*.{js,mjs,cjs,ts,vue}'], languageOptions: { globals: globals.browser } },
+  // the scripts of the workflows run under Node, not in a browser
+  { files: ['.github/scripts/**/*.mjs'], languageOptions: { globals: globals.node } },
   tseslint.configs.recommended,
   pluginVue.configs['flat/essential'],
   {

@@ -41,6 +41,9 @@ jobs:
       - name: Typecheck + build (web version)
         run: pnpm build:web
 
+      - name: Test the script that sets the version of a release
+        run: node --test .github/scripts/*.test.mjs
+
   rust:
     name: Rust (fmt, clippy, check)
     runs-on: ubuntu-latest
@@ -74,6 +77,14 @@ jobs:
 
       - name: Check
         run: cargo check --workspace --locked
+
+      # What a release does, on this disposable checkout: after the version of a tag is written,
+      # the lockfile still matches and the versions still agree (`versions_are_in_step`)
+      - name: The version of a release keeps the lockfile and the files in step
+        run: |
+          node .github/scripts/set-version.mjs v9.8.7
+          cargo fetch --locked --target x86_64-unknown-linux-gnu
+          cargo test --locked -p hitomi-core versions_are_in_step
 
   server:
     name: Server (build without GTK/WebKit)
