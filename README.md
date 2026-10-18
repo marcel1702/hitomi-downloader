@@ -4,7 +4,9 @@
 
 # 📚 Hitomi Downloader
 
-A GUI-based multi-threaded downloader for [hitomi.la](https://hitomi.la), built with [Tauri](https://v2.tauri.app/start/).
+A multi-threaded downloader for [hitomi.la](https://hitomi.la), as a desktop app built with
+[Tauri](https://v2.tauri.app/start/) and as a [web version](#-web-version-docker) for a server, which runs in
+Docker behind a login.
 
 Comics are downloaded straight into a `.cbz` archive with a `ComicInfo.xml` that follows the
 ComicRack v2.1 schema, so they open in any comic reader or comic server without a conversion
@@ -25,11 +27,12 @@ Download and run, no installation of a runtime required.
 | ⚡ Multi-threaded downloading | Several comics and several pages at a time. |
 | 📦 CBZ archives | A download lands as a single `.cbz` next to its `metadata.json` and cover, not as a loose folder of images. |
 | 🏷️ ComicInfo.xml | Validated against the ComicRack v2.1 schema, with title, series, artists, date, language, characters, circle and tags. |
-| 📖 Built-in reader | Read a downloaded comic straight from its archive, in page or scroll mode. |
+| 📖 Built-in reader | Read a downloaded comic straight from its archive, in page or scroll mode, with thumbnails, the mouse wheel and a slideshow. |
 | 📂 Export | One-click export to PDF or CBZ into a separate export directory. |
+| ☑️ Selection and delete | Tick several comics to download, export or delete them together, in the search and the local tab. |
 | 🌐 English and German | The interface ships both languages and switches at runtime. |
 | 🗂️ Custom folder structure | Freely configurable naming from fields like type, artist, title, language and id. |
-| 🐳 Web version | The same interface in the browser, as a Docker image for a server: [one place](#-web-version-docker) for the downloads, on a folder of the server. |
+| 🐳 Web version | The same interface in the browser, as a Docker image for a server behind a login: [one place](#-web-version-docker) for the downloads, on a folder of the server. It keeps its download queue across restarts and can [follow searches](#following-searches), downloading new galleries by itself. |
 
 ## 🖥️ Screenshots
 
@@ -77,7 +80,8 @@ contain the desktop app, there is no GTK or WebKit in it.
 1. Make the hash of your password: `docker run --rm -it ghcr.io/marcel1702/hitomi-downloader hash-password`
 2. Copy `.env.example` to `.env` next to [`docker-compose.yml`](docker-compose.yml) and fill it in: the
    login, the hash, and `LIBRARY_PATH`, the folder on the Docker host where the comics go. Keep the single
-   quotes around the hash, they stop Docker Compose from reading its `$` as variables.
+   quotes around the hash, they stop Docker Compose from reading its `$` as variables. The optional
+   settings of the [table below](#settings) can be made in the same file.
 3. `docker compose up -d`, then open `http://<server>:8080` and log in.
 
 The image is as visible as this repository. While that is private, `docker login ghcr.io` with a token
@@ -95,7 +99,8 @@ All of them are environment variables. The login has no default: **the server do
 | `HITOMI_CONFIG_DIR` | `config.json`, the logins, the logs, the download queue (`queue.json`), the followed searches (`subscriptions.json`) and the pages of running downloads, default `/config` |
 | `PUID`, `PGID`, `UMASK` | The user and group the files belong to (default `1000:1000`), and their rights (default `022`) |
 | `TZ` | Time zone of the logs |
-| `HITOMI_PORT` | The port in the container, default `8080` |
+| `HITOMI_HOST`, `HITOMI_PORT` | The address and port the server listens on, default `127.0.0.1:8080`. The image listens on `0.0.0.0:8080`, and `HITOMI_PORT` in the `.env` of the compose file is the port on the Docker host |
+| `HITOMI_WEB_DIR` | The built frontend, default `dist-web`, `/app/web` in the image |
 | `HITOMI_PUBLIC_URL` | The address you reach it under, behind a reverse proxy. `https://` makes the login cookie `Secure` |
 | `HITOMI_TRUST_FORWARDED_FOR` | Behind a reverse proxy: count the failed logins per client and not per proxy |
 | `HITOMI_SESSION_DAYS` | How long a login lasts, default 30 days |
@@ -126,7 +131,7 @@ one thing in another container and another here, and be moved to another mount p
 ### Login, https and the internet
 
 Every page needs a login, there is no way around it. The session lasts 30 days and survives a restart,
-five failed logins in a row lock the address out for 15 minutes. It still should not face the internet
+five failed logins within 15 minutes lock the address out for 15 minutes. It still should not face the internet
 without https: put a reverse proxy in front of it, set `HITOMI_PUBLIC_URL` to the address, and
 `HITOMI_TRUST_FORWARDED_FOR=true` so that the lockout counts the client and not the proxy.
 
@@ -234,6 +239,17 @@ pnpm tauri build
 
 For a development build with hot reload, use `pnpm tauri dev` instead.
 
+The web version needs no Tauri libraries. Build the frontend and run the server:
+
+```
+pnpm install
+pnpm build:web
+HITOMI_USERNAME=admin HITOMI_PASSWORD=change-me cargo run --release -p hitomi-server
+```
+
+It listens on `http://127.0.0.1:8080` and reads the frontend from `dist-web`, the settings are the
+[environment variables above](#settings).
+
 #### 🏷️ Making a release
 
 Push a tag named `vMAJOR.MINOR.PATCH`, for example `v1.2.3`, or `v1.2.3-rc.1` for a
@@ -255,7 +271,7 @@ three steps:
 1. Copy `src/locales/en-US.json` to `src/locales/<tag>.json` and translate the values. Keep
    every key — a missing key silently falls back to English.
 2. Register the file in `src/locales/index.ts`.
-3. Add the language tag to `SUPPORTED_LANGUAGES` in `src-tauri/src/config.rs`, so a saved
+3. Add the language tag to `SUPPORTED_LANGUAGES` in `crates/core/src/config.rs`, so a saved
    config naming it is not reset to English on startup.
 
 Tags and comic types are Hitomi's own vocabulary and stay untranslated on purpose.

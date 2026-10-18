@@ -31,16 +31,15 @@ services:
       # /data/export, where the image has made a folder every user may write to, so that a new
       # named volume inherits it.
       HITOMI_LIBRARY_DIR: /library
-      # How often the followed searches look for new galleries, in hours (0: not by themselves)
-      # HITOMI_FOLLOW_INTERVAL_HOURS: "6"
-      # Uncomment behind a reverse proxy that serves https:
-      # HITOMI_PUBLIC_URL: https://hitomi.example.com
-      # HITOMI_TRUST_FORWARDED_FOR: "true"
-      # Only if the library is on a file system with short file names, such as an encrypted
-      # shared folder of a Synology NAS (the server finds the limit out by itself):
-      # HITOMI_MAX_NAME_BYTES: "143"
+      # The settings below are made in .env, see .env.example. An empty value counts as not set.
+      HITOMI_FOLLOW_INTERVAL_HOURS: ${HITOMI_FOLLOW_INTERVAL_HOURS:-6}
+      HITOMI_PUBLIC_URL: ${HITOMI_PUBLIC_URL:-}
+      HITOMI_TRUST_FORWARDED_FOR: ${HITOMI_TRUST_FORWARDED_FOR:-}
+      HITOMI_SESSION_DAYS: ${HITOMI_SESSION_DAYS:-}
+      HITOMI_MAX_NAME_BYTES: ${HITOMI_MAX_NAME_BYTES:-}
     volumes:
-      # config.json, the logins, the logs, the download queue and the pages of running downloads
+      # config.json, the logins, the logs, the download queue, the followed searches and the pages
+      # of running downloads
       - hitomi-config:/config
       # The library, where the comics are. The long form with create_host_path: false
       # makes the container refuse to start if the source is missing, for example because an NFS
