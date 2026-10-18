@@ -249,6 +249,28 @@ waste. Everything else is welcome as a pull request against `main`:
 5. 📝 Documentation
 6. ⬆️ Dependency updates
 
+### Issues and labels
+
+[Issue #28](https://github.com/marcel1702/hitomi-downloader/issues/28) is the roadmap: what is
+done, what is planned and in which order. Every item is its own issue, branch and pull request.
+An issue has one label of each of these two kinds:
+
+| Where does it apply? | |
+|---|---|
+| `platform: web` | only the web version (server, Docker, browser) |
+| `platform: desktop` | only the desktop app |
+| `platform: all` | both, because the core or the frontend is shared |
+
+| What is it? | |
+|---|---|
+| `bug` | something does not work |
+| `enhancement` | a new function or an improvement |
+| `extension` | together with `enhancement`: optional, not part of the core scope |
+| `infra` | build, CI, release, Docker image |
+| `documentation` | documentation only |
+
+`roadmap` marks an overview issue such as #28 and needs no other label.
+
 ## ⚠️ Disclaimer
 
 - This tool is meant for learning, research and personal use. Anyone using it does so at their
