@@ -138,7 +138,10 @@
     "name": "Reader",
     "toggle_mode": "Toggle Mode (M)",
     "fit_width": "Fit Width (F)",
-    "thumbnails": "Thumbnails (T)"
+    "thumbnails": "Thumbnails (T)",
+    "slideshow_start": "Start Slideshow (S)",
+    "slideshow_stop": "Stop Slideshow (S)",
+    "slideshow_seconds": "Seconds per page"
   },
   "downloading_pane": {
     "name": "Downloads",

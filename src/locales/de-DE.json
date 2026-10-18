@@ -138,7 +138,10 @@
     "name": "Leser",
     "toggle_mode": "Ansicht wechseln (M)",
     "fit_width": "Breite anpassen (F)",
-    "thumbnails": "Vorschaubilder (T)"
+    "thumbnails": "Vorschaubilder (T)",
+    "slideshow_start": "Slideshow starten (S)",
+    "slideshow_stop": "Slideshow stoppen (S)",
+    "slideshow_seconds": "Sekunden pro Seite"
   },
   "downloading_pane": {
     "name": "Downloads",
