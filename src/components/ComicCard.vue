@@ -6,6 +6,7 @@ import { useI18n } from '../utils.ts'
 import DownloadButton from './DownloadButton.vue'
 import { useRevealPath } from '../composables/useRevealPath.ts'
 import { downloadUrl, isWeb, startBrowserDownload } from '../platform.ts'
+import { useDeleteComics } from '../composables/useDeleteComics.ts'
 
 const { t } = useI18n()
 
@@ -20,7 +21,12 @@ const props = withDefaults(
   },
 )
 
+const emit = defineEmits<{
+  deleted: [comic: Comic]
+}>()
+
 const store = useStore()
+const { deleteComics } = useDeleteComics()
 
 const cover = computed<string | undefined>(() => store.covers.get(props.comic.id))
 
@@ -64,6 +70,11 @@ async function exportCbz() {
   }
   const result = await commands.exportCbz(props.comic)
   if (result.status === 'error') console.error(result.error)
+}
+
+async function deleteComic() {
+  const [deleted] = await deleteComics([props.comic])
+  if (deleted !== undefined) emit('deleted', deleted)
 }
 
 function tagColor(female: number, male: number): string | undefined {
@@ -157,6 +168,9 @@ function tagNs(female: number, male: number): string {
             </n-button>
             <n-button type="primary" size="tiny" @click="exportCbz">
               {{ isWeb ? t('common.download_cbz') : t('common.export_cbz') }}
+            </n-button>
+            <n-button type="error" size="tiny" @click="deleteComic">
+              {{ t('delete.button') }}
             </n-button>
           </template>
           <download-button

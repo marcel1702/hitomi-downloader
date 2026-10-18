@@ -147,6 +147,20 @@ impl DownloadManager {
         Ok(())
     }
 
+    /// Whether the comic `id` is being downloaded: waiting, running or paused
+    ///
+    /// Its pages are about to become its archive then, so it can not be deleted.
+    pub fn is_active(&self, id: i32) -> bool {
+        self.download_tasks.read().get(&id).is_some_and(|task| {
+            matches!(
+                *task.state_sender.borrow(),
+                DownloadTaskState::Pending
+                    | DownloadTaskState::Downloading
+                    | DownloadTaskState::Paused
+            )
+        })
+    }
+
     /// A `Create` event for every task, carrying its current state and progress
     ///
     /// Lets a frontend that connects later, a second browser above all, list the downloads

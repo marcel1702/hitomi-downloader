@@ -6,10 +6,11 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { useStore } from '../store.ts'
 import ComicCard from '../components/ComicCard.vue'
 import { useI18n } from '../utils.ts'
-import { PhChecks, PhFilePdf, PhFileZip } from '@phosphor-icons/vue'
+import { PhChecks, PhFilePdf, PhFileZip, PhTrash } from '@phosphor-icons/vue'
 import { SelectionArea } from '@viselect/vue'
 import { useMultiSelect } from '../composables/useMultiSelect.ts'
 import { useRevealPath } from '../composables/useRevealPath.ts'
+import { useDeleteComics } from '../composables/useDeleteComics.ts'
 import { isWeb } from '../platform.ts'
 
 const { t } = useI18n()
@@ -151,6 +152,20 @@ async function showExportDirInFileManager() {
     return
   }
   await revealPath(store.config.exportDir)
+}
+
+const { deleteComics } = useDeleteComics()
+
+// the comics that are gone leave the list, and with them the selection
+function removeFromList(comics: Comic[]) {
+  const gone = new Set(comics.map((comic) => comic.id))
+  downloadedComics.value = downloadedComics.value.filter((comic) => !gone.has(comic.id))
+  // the last page may be empty now
+  currentPage.value = Math.max(1, Math.min(currentPage.value, pageCount.value))
+}
+
+async function deleteSelection() {
+  removeFromList(await deleteComics(selectedComics.value))
 }
 
 async function exportCbz(comics: Comic[]) {
@@ -322,6 +337,12 @@ function useContextMenu() {
         {{ hasSelection ? t('downloaded_pane.export_selection_pdf') : t('downloaded_pane.export_all_pdf') }}
         ({{ targetComics.length }})
       </n-button>
+      <n-button v-if="hasSelection" size="small" type="error" @click="deleteSelection">
+        <template #icon>
+          <n-icon size="18"><PhTrash /></n-icon>
+        </template>
+        {{ t('delete.selection') }} ({{ selectedComics.length }})
+      </n-button>
       <n-button v-if="hasSelection" class="ml-auto" size="small" quaternary @click="clearSelection">
         {{ t('common.clear_selection') }}
       </n-button>
@@ -348,7 +369,7 @@ function useContextMenu() {
         :data-key="comic.id"
         :class="['selectable rounded p-[2px] relative', selectedIds.has(comic.id) ? 'selected' : '']"
         @contextmenu="() => onContextMenu(comic.id)">
-        <comic-card :search="search" :comic="comic" show-export />
+        <comic-card :search="search" :comic="comic" show-export @deleted="removeFromList([$event])" />
         <div class="absolute top-2 left-2 z-10 bg-white/50 rounded flex items-center justify-center p-1" @mousedown.stop @touchstart.stop @pointerdown.stop @click.stop>
           <n-checkbox
             size="large"

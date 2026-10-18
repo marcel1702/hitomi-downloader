@@ -117,6 +117,15 @@
     "export_all_cbz_started": "{count} Comics werden als CBZ exportiert …",
     "export_all_pdf_started": "{count} Comics werden als PDF exportiert …"
   },
+  "delete": {
+    "button": "Löschen",
+    "selection": "Auswahl löschen",
+    "title": "Aus der Bibliothek löschen?",
+    "confirm_one": "„{title}“ wird aus der Bibliothek gelöscht. Das lässt sich nicht rückgängig machen. Exportierte Dateien bleiben erhalten.",
+    "confirm_many": "{count} Comics werden aus der Bibliothek gelöscht. Das lässt sich nicht rückgängig machen. Exportierte Dateien bleiben erhalten.",
+    "deleted": "{count} gelöscht",
+    "failed": "„{title}“ konnte nicht gelöscht werden"
+  },
   "comic_pane": {
     "name": "Comic",
     "other_language": "Andere Sprachen",

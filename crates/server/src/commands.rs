@@ -35,6 +35,7 @@ pub fn router() -> Router<AppState> {
         .route("/get_synced_comic", post(get_synced_comic))
         .route("/export_cbz", post(export_cbz))
         .route("/export_pdf", post(export_pdf))
+        .route("/delete_comic", post(delete_comic))
         .route("/get_search_suggestions", post(get_search_suggestions))
         .route("/get_logs_dir_size", post(get_logs_dir_size))
         .route("/update_tray_menu_labels", post(update_tray_menu_labels))
@@ -241,6 +242,19 @@ async fn export_pdf(
 ) -> ApiResult<Json<()>> {
     let comic = checked_comic(&state, comic)?;
     blocking(move || api::export_pdf(&state.context, comic)).await??;
+    Ok(Json(()))
+}
+
+async fn delete_comic(
+    State(state): State<AppState>,
+    Args(ComicArgs { comic }): Args<ComicArgs>,
+) -> ApiResult<Json<()>> {
+    let comic = checked_comic(&state, comic)?;
+    let id = comic.id;
+    let context = state.context.clone();
+    blocking(move || api::delete_comic(&context, comic)).await??;
+    // the cached comic still names the directory that is gone
+    state.comics.remove(id);
     Ok(Json(()))
 }
 

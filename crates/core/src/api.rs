@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 use crate::{
     config::Config,
     context::Context,
+    delete,
     errors::{CommandError, CommandResult},
     export,
     extensions::AnyhowErrorToStringChain,
@@ -151,6 +152,15 @@ pub fn export_cbz(context: &Context, comic: Comic) -> CommandResult<()> {
         CommandError::from(&format!("Failed to export cbz for comic `{title}`"), err)
     })?;
     tracing::debug!("Exported cbz for comic `{title}` successfully");
+    Ok(())
+}
+
+/// Delete a downloaded comic from the library, see [`delete::comic`]
+pub fn delete_comic(context: &Context, comic: Comic) -> CommandResult<()> {
+    let title = &comic.title;
+    delete::comic(context, &comic)
+        .map_err(|err| CommandError::from(&format!("Failed to delete the comic `{title}`"), err))?;
+    tracing::info!("Deleted the comic `{title}` from the library");
     Ok(())
 }
 

@@ -7,6 +7,7 @@ import { useMessage } from 'naive-ui'
 import DownloadButton from '../components/DownloadButton.vue'
 import ComicCard from '../components/ComicCard.vue'
 import { useRevealPath } from '../composables/useRevealPath.ts'
+import { useDeleteComics } from '../composables/useDeleteComics.ts'
 
 const { t } = useI18n()
 
@@ -17,6 +18,7 @@ defineProps<{
 }>()
 
 const store = useStore()
+const { deleteComics } = useDeleteComics()
 
 const relatedComics = ref<Comic[]>([])
 const containerRef = ref<HTMLElement>()
@@ -125,6 +127,9 @@ async function showComicDownloadDirInFileManager() {
         <div class="flex flex-col gap-row-2">
           <n-button v-if="store.pickedComic.isDownloaded" size="small" @click="showComicDownloadDirInFileManager">
             {{ revealLabel }}
+          </n-button>
+          <n-button v-if="store.pickedComic.isDownloaded" size="small" type="error" @click="deleteComics([store.pickedComic])">
+            {{ t('delete.button') }}
           </n-button>
           <n-button size="small" type="info" @click="store.currentTabName = 'reader'">
             {{ t('comic_pane.read') }}

@@ -52,6 +52,11 @@ the right-click menu, or `Export All` for the whole library. Tick the checkboxes
 becomes `Export Selection`. The `Search` tab works the same way: `Download All` below the search
 fields becomes `Download Selection`.
 
+`Delete` on a comic card, in the `Comic` tab, or `Delete Selection` for ticked comics removes the
+comic from the library, in the desktop app and in the browser alike. It always asks first, and
+it only deletes inside the download directory: exported files stay, and so does everything that
+is not a downloaded comic. A comic that is still downloading can not be deleted.
+
 📹 The video below walks through the whole flow. **It is safe for work.**
 
 https://github.com/user-attachments/assets/d2d0e577-c074-41ca-996f-445d52e2cce5

@@ -838,7 +838,7 @@ mod tests {
             std::path::PathBuf::from("/etc"),
         ] {
             let comic = json!({ "comic": comic_json(1, Some(&dir)) });
-            for command in ["export_cbz", "export_pdf"] {
+            for command in ["export_cbz", "export_pdf", "delete_comic"] {
                 let (status, body) =
                     request("POST", &format!("/api/{command}"), Some(comic.clone())).await;
                 assert_eq!(status, StatusCode::FORBIDDEN, "{command} {}", dir.display());
@@ -920,6 +920,55 @@ mod tests {
         std::fs::read_dir(files::temp_dir(state))
             .map(|entries| entries.filter_map(Result::ok).map(|e| e.path()).collect())
             .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn a_comic_is_deleted_from_the_library_and_forgotten_by_the_cache() {
+        let (state, _) = test_state();
+        let metadata = serde_json::to_vec(&hitomi_core::types::Comic {
+            id: 9201,
+            ..Default::default()
+        })
+        .unwrap();
+        let name = "Delete Me - 9201";
+        let dir = library_comic(
+            9201,
+            name,
+            &[
+                ("metadata.json", metadata.as_slice()),
+                (&format!("{name}.cbz"), b"archive"),
+            ],
+        );
+        assert!(state.comics.ids().contains(&9201));
+
+        let comic = json!({ "comic": comic_json(9201, Some(&dir)) });
+        let (status, body) = request("POST", "/api/delete_comic", Some(comic.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        assert!(!dir.exists());
+        assert!(!state.comics.ids().contains(&9201));
+
+        // gone is an error, and says so
+        let (status, _) = request("POST", "/api/delete_comic", Some(comic)).await;
+        assert_ne!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_directory_that_is_not_that_comic_is_not_deleted() {
+        let metadata = serde_json::to_vec(&hitomi_core::types::Comic {
+            id: 9202,
+            ..Default::default()
+        })
+        .unwrap();
+        let dir = library_comic(
+            9203,
+            "Other Comic - 9202",
+            &[("metadata.json", metadata.as_slice())],
+        );
+        // the client asks to delete the comic 9203 in the folder of the comic 9202
+        let comic = json!({ "comic": comic_json(9203, Some(&dir)) });
+        let (status, _) = request("POST", "/api/delete_comic", Some(comic)).await;
+        assert_ne!(status, StatusCode::OK);
+        assert!(dir.join("metadata.json").exists());
     }
 
     #[tokio::test]
