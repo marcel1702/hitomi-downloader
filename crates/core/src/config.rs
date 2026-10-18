@@ -103,8 +103,8 @@ impl Config {
     pub fn save(&self, app_data_dir: &Path) -> anyhow::Result<()> {
         let config_path = app_data_dir.join("config.json");
         let config_string = serde_json::to_string_pretty(self)?;
-        std::fs::write(config_path, config_string)?;
-        Ok(())
+        // a file cut off by a crash would be read as the defaults at the next start
+        crate::utils::write_atomically(&config_path, config_string.as_bytes())
     }
 
     fn merge_config(config_string: &str, app_data_dir: &Path) -> Config {

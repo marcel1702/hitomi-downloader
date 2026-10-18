@@ -247,7 +247,7 @@ struct Found {
 
 /// The subscriptions of the app and what looks after them
 pub struct Subscriptions {
-    path: PathBuf,
+    file: utils::AtomicFile,
     source: Arc<dyn SearchSource>,
     downloads: Arc<dyn Downloads>,
     /// How often a subscription is checked, none when the checks are off. A check that is
@@ -313,7 +313,7 @@ impl Subscriptions {
     ) -> Arc<Subscriptions> {
         let subscriptions = load(&path);
         Arc::new(Subscriptions {
-            path,
+            file: utils::AtomicFile::new(path),
             source,
             downloads,
             interval,
@@ -696,14 +696,16 @@ impl Subscriptions {
             .unwrap_or_default()
     }
 
+    /// Write the subscriptions as they are once the other writes of the file are done, so
+    /// that a write with an older state, a check that ends, never lands after a newer one
     fn save(&self) {
-        let file = SubscriptionsFile {
-            version: FILE_VERSION,
-            subscriptions: self.subscriptions.lock().clone(),
-        };
-        let result = serde_json::to_vec(&file)
-            .map_err(anyhow::Error::from)
-            .and_then(|json| utils::write_atomically(&self.path, &json));
+        let result = self.file.write(|| {
+            let file = SubscriptionsFile {
+                version: FILE_VERSION,
+                subscriptions: self.subscriptions.lock().clone(),
+            };
+            Ok(serde_json::to_vec(&file)?)
+        });
         if let Err(err) = result {
             tracing::error!(
                 message = err.to_string_chain(),
@@ -1361,6 +1363,50 @@ mod tests {
         check.await.unwrap().unwrap();
         assert!(!fixture.subscriptions.is_checking(&view.id));
         assert_eq!(fixture.view(&view.id).status, Status::Active);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_delete_or_pause_during_a_check_is_still_there_after_it() {
+        let fixture = Fixture::with(None, Duration::from_millis(150));
+        fixture.search.set("a", &[1]);
+        fixture.search.set("b", &[1]);
+        let a = fixture
+            .subscriptions
+            .create("a", FirstRun::FromNow, T0)
+            .await
+            .unwrap()
+            .id;
+        let b = fixture
+            .subscriptions
+            .create("b", FirstRun::FromNow, T0)
+            .await
+            .unwrap()
+            .id;
+        fixture.search.set("a", &[2, 1]);
+        fixture.search.set("b", &[3, 1]);
+
+        let subscriptions = fixture.subscriptions.clone();
+        let (check_a, check_b) = (a.clone(), b.clone());
+        let checks = tokio::spawn(async move {
+            let (first, second) = tokio::join!(
+                subscriptions.check(&check_a, T0 + HOUR),
+                subscriptions.check(&check_b, T0 + HOUR)
+            );
+            first.unwrap();
+            second.unwrap();
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(fixture.subscriptions.is_checking(&a) || fixture.subscriptions.is_checking(&b));
+        fixture.subscriptions.delete(&a).unwrap();
+        fixture.subscriptions.set_paused(&b, true).unwrap();
+        checks.await.unwrap();
+
+        for subscriptions in [fixture.subscriptions.clone(), fixture.reopen()] {
+            let list = subscriptions.list(T0 + HOUR).subscriptions;
+            assert_eq!(list.len(), 1, "the deleted one came back");
+            assert_eq!(list[0].id, b);
+            assert_eq!(list[0].status, Status::Paused, "the pause was undone");
+        }
     }
 
     #[tokio::test]

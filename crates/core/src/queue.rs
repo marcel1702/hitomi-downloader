@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     download_manager::DownloadTaskState,
     types::{Comic, DownloadFormat},
-    utils,
+    utils::{self, AtomicFile},
 };
 
 /// Bumped when the file changes in a way an older version could not read
@@ -76,14 +76,15 @@ pub fn load(path: &Path) -> Vec<StoredTask> {
     }
 }
 
-/// Write `tasks` to `path`, all of it or nothing, see [`utils::write_atomically`]
-pub fn save(path: &Path, tasks: &[StoredTask]) -> anyhow::Result<()> {
-    let file = QueueFile {
-        version: FILE_VERSION,
-        tasks: tasks.to_vec(),
-    };
-    let json = serde_json::to_vec(&file).context("Failed to serialize the download queue")?;
-    utils::write_atomically(path, &json)
+/// Write what `tasks` returns to `file`, all of it or nothing, see [`AtomicFile`]
+pub fn save(file: &AtomicFile, tasks: impl FnOnce() -> Vec<StoredTask>) -> anyhow::Result<()> {
+    file.write(|| {
+        let file = QueueFile {
+            version: FILE_VERSION,
+            tasks: tasks(),
+        };
+        serde_json::to_vec(&file).context("Failed to serialize the download queue")
+    })
 }
 
 #[cfg(test)]
@@ -117,7 +118,7 @@ mod tests {
             task(1, DownloadTaskState::Pending),
             task(2, DownloadTaskState::Failed),
         ];
-        save(&path, &tasks).unwrap();
+        save(&AtomicFile::new(path.clone()), || tasks.clone()).unwrap();
         let loaded = load(&path);
         assert_eq!(
             loaded.iter().map(|t| t.comic.id).collect::<Vec<_>>(),
@@ -150,7 +151,10 @@ mod tests {
             b"{ this is not json"
         );
         // and it can be written again
-        save(&path, &[task(1, DownloadTaskState::Pending)]).unwrap();
+        save(&AtomicFile::new(path.clone()), || {
+            vec![task(1, DownloadTaskState::Pending)]
+        })
+        .unwrap();
         assert_eq!(load(&path).len(), 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -167,15 +171,15 @@ mod tests {
     #[test]
     fn saving_over_an_older_queue_replaces_it() {
         let (path, dir) = temp_file();
-        save(
-            &path,
-            &[
+        let file = AtomicFile::new(path.clone());
+        save(&file, || {
+            vec![
                 task(1, DownloadTaskState::Pending),
                 task(2, DownloadTaskState::Pending),
-            ],
-        )
+            ]
+        })
         .unwrap();
-        save(&path, &[task(2, DownloadTaskState::Paused)]).unwrap();
+        save(&file, || vec![task(2, DownloadTaskState::Paused)]).unwrap();
         let loaded = load(&path);
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].state, DownloadTaskState::Paused);

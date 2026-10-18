@@ -31,7 +31,7 @@ use crate::{
     pages,
     queue::{self, StoredTask},
     types::{Comic, ComicInfo, DownloadFormat},
-    utils::filename_filter,
+    utils::{self, filename_filter, AtomicFile},
 };
 
 /// Used to manage download tasks
@@ -55,7 +55,7 @@ pub struct DownloadManager {
     /// In the order the tasks were created, which is the order the frontend lists them in
     download_tasks: Arc<RwLock<IndexMap<i32, DownloadTask>>>,
     /// Where the queue is kept between runs, see [`crate::context::Options`]
-    queue_file: Option<PathBuf>,
+    queue_file: Option<Arc<AtomicFile>>,
     /// Told whenever a task is added or changes its state, which is what the file holds
     queue_changed: Arc<Notify>,
 }
@@ -88,7 +88,9 @@ impl DownloadManager {
             img_limit: Arc::new(AtomicU32::new(img_concurrency)),
             byte_per_sec: Arc::new(AtomicU64::new(0)),
             download_tasks: Arc::new(RwLock::new(IndexMap::new())),
-            queue_file: context.queue_file().map(Path::to_path_buf),
+            queue_file: context
+                .queue_file()
+                .map(|path| Arc::new(AtomicFile::new(path.to_path_buf()))),
             queue_changed: Arc::new(Notify::new()),
         };
 
@@ -149,10 +151,10 @@ impl DownloadManager {
     /// ones that were downloaded lie in the temporary directory still. Paused and failed ones
     /// come back as they were.
     pub fn restore_queue(&self) {
-        let Some(path) = &self.queue_file else {
+        let Some(file) = &self.queue_file else {
             return;
         };
-        self.restore(queue::load(path));
+        self.restore(queue::load(file.path()));
     }
 
     fn restore(&self, stored: Vec<StoredTask>) {
@@ -216,14 +218,24 @@ impl DownloadManager {
     /// Also what the end of a download does, so that a comic that is in the library is not in
     /// the file any more when the process ends a moment later.
     pub fn save_queue_now(&self) {
-        let Some(path) = &self.queue_file else {
-            return;
-        };
-        if let Err(err) = queue::save(path, &self.queue_snapshot()) {
+        if let Err(err) = self.save_queue() {
             let err_title = "Failed to save the download queue";
             let string_chain = err.to_string_chain();
             tracing::error!(err_title, message = string_chain);
         }
+    }
+
+    /// Write the queue file, the snapshot is taken once the other writes of it are done
+    fn save_queue(&self) -> anyhow::Result<()> {
+        let Some(file) = &self.queue_file else {
+            return Ok(());
+        };
+        queue::save(file, || self.queue_snapshot())
+    }
+
+    /// [`DownloadManager::save_queue_now`] on a thread that may block
+    async fn save_queue_in_background(self) {
+        utils::save_blocking("the download queue", move || self.save_queue()).await;
     }
 
     async fn persist_queue_loop(self) {
@@ -231,11 +243,7 @@ impl DownloadManager {
             self.queue_changed.notified().await;
             // what changes while it waits is written with it
             tokio::time::sleep(QUEUE_WRITE_DELAY).await;
-            let manager = self.clone();
-            // the file can be megabytes, which must not block the async runtime
-            if let Err(err) = tokio::task::spawn_blocking(move || manager.save_queue_now()).await {
-                tracing::error!("Failed to save the download queue: {err}");
-            }
+            self.clone().save_queue_in_background().await;
         }
     }
 
@@ -582,8 +590,8 @@ impl DownloadTask {
         self.emit_download_task_update_event();
         // Not after the delay of the writer: a restart in between would download it again.
         // And not waited for: nothing may wait here once the state is `Completed`, see `process`.
-        let manager = self.download_manager.clone();
-        tokio::task::spawn_blocking(move || manager.save_queue_now());
+        let save = self.download_manager.clone().save_queue_in_background();
+        self.context.spawn(save);
     }
 
     fn create_temp_download_dir(&self) -> Option<PathBuf> {
