@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 import { Comic, commands, Config, SearchResult } from './bindings.ts'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { CurrentTabName, ProgressData } from './types.ts'
 import { coverUrl, isWeb } from './platform.ts'
+import { SubscriptionList, subscriptionCommands } from './subscriptions.ts'
 
 export const useStore = defineStore('store', () => {
   const config = ref<Config>()
@@ -11,6 +12,19 @@ export const useStore = defineStore('store', () => {
   const progresses = ref<Map<number, ProgressData>>(new Map())
   const covers = ref<Map<number, string>>(new Map())
   const searchResult = ref<SearchResult>()
+  // the followed searches, web version only
+  const subscriptions = ref<SubscriptionList>()
+  const subscriptionErrors = computed(
+    () => subscriptions.value?.subscriptions.filter((subscription) => subscription.status === 'error').length ?? 0,
+  )
+
+  async function loadSubscriptions() {
+    try {
+      subscriptions.value = await subscriptionCommands.list()
+    } catch (err) {
+      console.error(err)
+    }
+  }
 
   async function loadCover(id: number, url: string, comicDownloadDir?: string | null) {
     if (isWeb) {
@@ -29,5 +43,16 @@ export const useStore = defineStore('store', () => {
     covers.value.set(id, cover)
   }
 
-  return { config, pickedComic, currentTabName, progresses, covers, loadCover, searchResult }
+  return {
+    config,
+    pickedComic,
+    currentTabName,
+    progresses,
+    covers,
+    loadCover,
+    searchResult,
+    subscriptions,
+    subscriptionErrors,
+    loadSubscriptions,
+  }
 })

@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import type { TabsInst } from 'naive-ui'
 import { useMessage, useNotification } from 'naive-ui'
 import { commands } from './bindings.ts'
@@ -14,6 +14,7 @@ import DownloadedPane from './panes/DownloadedPane.vue'
 import ComicPane from './panes/ComicPane.vue'
 import ReaderPane from './panes/ReaderPane.vue'
 import DownloadingPane from './panes/DownloadingPane.vue'
+import SubscriptionsPane from './panes/SubscriptionsPane.vue'
 import { PhClockCounterClockwise, PhInfo, PhSignOut, PhTranslate } from '@phosphor-icons/vue'
 import { locales, resolveLocale } from './locales'
 
@@ -73,6 +74,18 @@ watch(
   },
   { deep: true },
 )
+
+// The badge of the followed searches counts those with an error. The tab loads the list when
+// it is shown, this is for the time it is not.
+let subscriptionTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  if (!isWeb) return
+  store.loadSubscriptions()
+  subscriptionTimer = setInterval(() => {
+    if (store.currentTabName !== 'following') store.loadSubscriptions()
+  }, 60_000)
+})
+onUnmounted(() => clearInterval(subscriptionTimer))
 
 onMounted(async () => {
   // block the browser right-click menu
@@ -147,6 +160,19 @@ onMounted(async () => {
         </n-tab-pane>
         <n-tab-pane class="h-full overflow-hidden p-0!" name="reader" :tab="t('reader_pane.name')" display-directive="show">
           <reader-pane />
+        </n-tab-pane>
+        <!-- a check needs a server that keeps running, the desktop app has no such tab -->
+        <n-tab-pane
+          v-if="isWeb"
+          class="h-full overflow-auto p-0!"
+          name="following"
+          display-directive="show">
+          <template #tab>
+            <n-badge :value="store.subscriptionErrors" :show="store.subscriptionErrors > 0" :offset="[10, -2]">
+              {{ t('following_pane.name') }}
+            </n-badge>
+          </template>
+          <subscriptions-pane v-if="searchPaneRef !== undefined" :search="searchPaneRef.search" />
         </n-tab-pane>
       </n-tabs>
       <div class="flex-[2] min-w-0 overflow-auto h-full flex flex-col border-l border-gray-2">
