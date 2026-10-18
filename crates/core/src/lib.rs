@@ -15,6 +15,7 @@ pub mod hitomi;
 pub mod hitomi_client;
 pub mod logger;
 pub mod pages;
+pub mod queue;
 pub mod types;
 pub mod utils;
 

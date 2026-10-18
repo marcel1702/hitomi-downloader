@@ -34,11 +34,17 @@ pub struct Options {
     /// them in its config volume, so a scan of the library can not find a half finished
     /// download, and a network share only gets the finished archive written once.
     pub temp_dir: Option<PathBuf>,
+    /// Where the download queue is kept, so that a restart does not lose it
+    ///
+    /// Without one the queue lives and dies with the process, as in the desktop app. The web
+    /// version sets it, a container is restarted for every update.
+    pub queue_file: Option<PathBuf>,
 }
 
 struct Inner {
     data_dir: PathBuf,
     temp_dir: Option<PathBuf>,
+    queue_file: Option<PathBuf>,
     runtime: tokio::runtime::Handle,
     events: Box<dyn EventSink>,
     config: RwLock<Config>,
@@ -80,6 +86,7 @@ impl Context {
             inner: Arc::new(Inner {
                 data_dir,
                 temp_dir: options.temp_dir,
+                queue_file: options.queue_file,
                 runtime,
                 events: Box::new(events),
                 config: RwLock::new(config),
@@ -115,6 +122,11 @@ impl Context {
     /// Where the pages of a download are kept, if not next to the comic, see [`Options`]
     pub fn temp_dir(&self) -> Option<&Path> {
         self.inner.temp_dir.as_deref()
+    }
+
+    /// Where the download queue is kept, if it is, see [`Options`]
+    pub fn queue_file(&self) -> Option<&Path> {
+        self.inner.queue_file.as_deref()
     }
 
     pub fn logs_dir(&self) -> PathBuf {

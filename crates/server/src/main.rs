@@ -80,6 +80,8 @@ async fn run() -> anyhow::Result<()> {
         },
         Options {
             temp_dir: Some(settings.temp_dir.clone()),
+            // the downloads of a container that is stopped for an update come back with it
+            queue_file: Some(settings.config_dir.join("queue.json")),
         },
     )?;
     let pinned_dirs = PinnedDirs::resolve(
@@ -92,6 +94,9 @@ async fn run() -> anyhow::Result<()> {
     check_volumes(&settings, &pinned_dirs)?;
     logger::init(&context, &[env!("CARGO_CRATE_NAME")])?;
     limit_file_names(&settings, &pinned_dirs)?;
+    // only now: a download that comes back works out its directory from the pinned library
+    // and the file name limit, and says so in the log
+    context.download_manager().restore_queue();
     let auth = Auth::new(&settings.auth, &settings.config_dir, Policy::default())?;
 
     let (shutdown_sender, shutdown) = watch::channel(false);
@@ -142,7 +147,10 @@ async fn run() -> anyhow::Result<()> {
 
     report_interrupted_downloads(&context);
     // writes out what the file logger still buffers
-    logger::disable_file_logger()?;
+    let logger_result = logger::disable_file_logger();
+    // last, a download that ends while the server shuts down must not stay in the file
+    context.download_manager().save_queue_now();
+    logger_result?;
     Ok(())
 }
 
@@ -329,10 +337,10 @@ async fn shutdown_signal() {
     }
 }
 
-/// Downloads are not kept across a restart yet, say which ones stopped
+/// Say which downloads the shutdown stopped
 ///
-/// Their finished images stay in the temporary download directory, so downloading the
-/// comic again only fetches the rest.
+/// They are in the queue file and come back at the next start. Their finished images stay in
+/// the temporary download directory, so only the rest is fetched.
 fn report_interrupted_downloads(context: &Context) {
     for event in context.download_manager().task_snapshots() {
         let DownloadTaskEvent::Create {
@@ -351,7 +359,7 @@ fn report_interrupted_downloads(context: &Context) {
             tracing::warn!(
                 id = comic.id,
                 comic_title = comic.title,
-                "Download interrupted by the shutdown at {downloaded_img_count}/{total_img_count} images, downloading it again continues from there"
+                "Download interrupted by the shutdown at {downloaded_img_count}/{total_img_count} images, it continues from there at the next start"
             );
         }
     }
@@ -393,6 +401,7 @@ mod tests {
                 },
                 Options {
                     temp_dir: Some(root.join("config").join("downloading")),
+                    queue_file: None,
                 },
             )
             .unwrap();
