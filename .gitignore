@@ -1,3 +1,6 @@
+# The settings of the Docker setup, with the hash of the password (.env.example is the template)
+.env
+
 # Node
 node_modules/
 dist/
