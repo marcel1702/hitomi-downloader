@@ -119,6 +119,12 @@ one thing in another container and another here, and be moved to another mount p
 - **Owner and rights.** The files belong to `PUID:PGID`. On an NFS share the numeric ids count, and its
   settings (root squash, a user it maps everyone to) decide who may write. `UMASK` decides whether other users
   can read what is written. **The library is never `chown`ed**, only `/config` is handed to the user.
+- **Named volumes.** `/data/library` and `/data/export` are open to everyone in the image (`0777`). Docker copies
+  that into a new named volume, so any `PUID` can write to it without a `chown`. Only the root folder of the
+  volume is open: what the server writes in it has the rights of `UMASK`. A bind mount or a share keeps the
+  rights of its folder on the host, the `0777` of the image does not apply to it. That is why it stays: in the
+  container only the server runs, and on the host the volumes lie below `/var/lib/docker/volumes`, which only
+  root can enter.
 - **It checks at the start.** A directory the user can not write, with the user, its owner and what to do about
   it in the message, and a directory where nothing is mounted, which would lose its files with the container.
 - **A missing mount.** With the short form of a bind mount Docker makes an empty folder on the host if the source
