@@ -31,6 +31,8 @@ services:
       # /data/export, where the image has made a folder every user may write to, so that a new
       # named volume inherits it.
       HITOMI_LIBRARY_DIR: /library
+      # How often the followed searches look for new galleries, in hours (0: not by themselves)
+      # HITOMI_FOLLOW_INTERVAL_HOURS: "6"
       # Uncomment behind a reverse proxy that serves https:
       # HITOMI_PUBLIC_URL: https://hitomi.example.com
       # HITOMI_TRUST_FORWARDED_FOR: "true"

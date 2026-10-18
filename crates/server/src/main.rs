@@ -14,6 +14,7 @@ mod commands;
 mod error;
 mod events;
 mod files;
+mod follow;
 mod images;
 mod paths;
 mod settings;
@@ -25,7 +26,11 @@ use std::{io::IsTerminal, net::SocketAddr, path::Path, process::ExitCode, sync::
 use anyhow::{bail, Context as _};
 use axum::{http::StatusCode, middleware, routing::get, Json, Router};
 use hitomi_core::{
-    context::Options, download_manager::DownloadTaskState, events::DownloadTaskEvent, logger,
+    context::Options,
+    download_manager::DownloadTaskState,
+    events::DownloadTaskEvent,
+    logger,
+    subscriptions::{ContextDownloads, HitomiSearch, Subscriptions},
     Context,
 };
 use serde_json::{json, Value};
@@ -99,6 +104,12 @@ async fn run() -> anyhow::Result<()> {
     context.download_manager().restore_queue();
     let auth = Auth::new(&settings.auth, &settings.config_dir, Policy::default())?;
 
+    let subscriptions = Subscriptions::open(
+        settings.config_dir.join("subscriptions.json"),
+        Arc::new(HitomiSearch),
+        Arc::new(ContextDownloads::new(context.clone())),
+        settings.follow_interval,
+    );
     let (shutdown_sender, shutdown) = watch::channel(false);
     let state = AppState {
         context: context.clone(),
@@ -106,8 +117,19 @@ async fn run() -> anyhow::Result<()> {
         pdf_permits: Arc::new(Semaphore::new(MAX_PDFS_AT_ONCE)),
         events,
         comics,
-        shutdown,
+        subscriptions: subscriptions.clone(),
+        shutdown: shutdown.clone(),
     };
+    match settings.follow_interval {
+        Some(interval) => {
+            tracing::info!(
+                hours = interval.as_secs() / 3600,
+                "Followed searches are checked at this interval"
+            );
+            tokio::spawn(follow::run_scheduler(subscriptions, shutdown));
+        }
+        None => tracing::info!("Checks of followed searches are off, they run when asked for"),
+    }
     // a crash may have left PDFs of downloads that were running
     files::clear_temp_dir(&files::temp_dir(&state));
 
@@ -271,6 +293,7 @@ fn app(state: AppState, auth: Auth, web_dir: &Path) -> Router {
         .route("/events", get(events::events))
         .nest("/comics", images::router().merge(files::router()))
         .merge(commands::router())
+        .merge(follow::router())
         .fallback(api_not_found);
 
     // Paths the frontend routes itself get its index.html
@@ -411,16 +434,326 @@ mod tests {
             };
             pin_dirs(&context, &pinned_dirs).unwrap();
             let (_, shutdown) = watch::channel(false);
+            let subscriptions = Subscriptions::open(
+                root.join("config").join("subscriptions.json"),
+                follow_fakes().search.clone(),
+                follow_fakes().downloads.clone(),
+                Some(std::time::Duration::from_secs(6 * 3600)),
+            );
             let state = AppState {
                 context,
                 pinned_dirs,
                 pdf_permits: Arc::new(Semaphore::new(MAX_PDFS_AT_ONCE)),
                 events,
                 comics,
+                subscriptions,
                 shutdown,
             };
             (state, web_dir)
         })
+    }
+
+    /// What the followed searches find and queue in the tests, instead of Hitomi
+    #[derive(Default)]
+    struct FollowFakes {
+        search: Arc<FakeSearch>,
+        downloads: Arc<FakeDownloads>,
+    }
+
+    fn follow_fakes() -> &'static FollowFakes {
+        static FAKES: OnceLock<FollowFakes> = OnceLock::new();
+        FAKES.get_or_init(FollowFakes::default)
+    }
+
+    #[derive(Default)]
+    struct FakeSearch {
+        results: parking_lot::Mutex<std::collections::HashMap<String, Result<Vec<i32>, String>>>,
+    }
+
+    impl FakeSearch {
+        fn set(&self, query: &str, ids: &[i32]) {
+            self.results
+                .lock()
+                .insert(query.to_string(), Ok(ids.to_vec()));
+        }
+
+        fn fail(&self, query: &str) {
+            self.results
+                .lock()
+                .insert(query.to_string(), Err("Hitomi is not there".to_string()));
+        }
+    }
+
+    impl hitomi_core::subscriptions::SearchSource for FakeSearch {
+        fn ids<'a>(
+            &'a self,
+            query: &'a str,
+        ) -> futures::future::BoxFuture<'a, anyhow::Result<Vec<i32>>> {
+            Box::pin(async move {
+                match self.results.lock().get(query) {
+                    Some(Ok(ids)) => Ok(ids.clone()),
+                    Some(Err(message)) => Err(anyhow::anyhow!(message.clone())),
+                    None => Ok(Vec::new()),
+                }
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeDownloads {
+        queued: parking_lot::Mutex<Vec<i32>>,
+    }
+
+    impl hitomi_core::subscriptions::Downloads for FakeDownloads {
+        fn library_ids(&self) -> std::collections::HashSet<i32> {
+            std::collections::HashSet::new()
+        }
+
+        fn is_active(&self, _id: i32) -> bool {
+            false
+        }
+
+        fn queue<'a>(&'a self, id: i32) -> futures::future::BoxFuture<'a, anyhow::Result<()>> {
+            Box::pin(async move {
+                self.queued.lock().push(id);
+                Ok(())
+            })
+        }
+    }
+
+    /// Wait for what a check in the background does
+    async fn eventually(what: &str, done: impl Fn() -> bool) {
+        for _ in 0..100 {
+            if done() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("{what} did not happen");
+    }
+
+    async fn post_json(path: &str, body: Value) -> (StatusCode, Value) {
+        let (status, bytes) = request("POST", path, Some(body)).await;
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    fn subscription_of(list: &Value, query: &str) -> Option<Value> {
+        list["subscriptions"]
+            .as_array()?
+            .iter()
+            .find(|subscription| subscription["query"] == query)
+            .cloned()
+    }
+
+    #[tokio::test]
+    async fn a_search_is_followed_from_now_and_listed() {
+        test_state();
+        let fakes = follow_fakes();
+        fakes.search.set("artist:http one", &[3, 2, 1]);
+
+        let (status, preview) = post_json(
+            "/api/preview_subscription",
+            json!({ "query": "Artist:HTTP  One" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(preview["query"], json!("artist:http one"));
+        assert_eq!(preview["matches"], json!(3));
+        assert_eq!(preview["toDownload"], json!(3));
+        assert_eq!(preview["alreadyFollowed"], json!(false));
+        assert_eq!(preview["canDownloadAll"], json!(true));
+
+        let (status, created) = post_json(
+            "/api/create_subscription",
+            json!({ "query": "artist:http one", "firstRun": "fromNow" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        assert_eq!(created["status"], json!("active"));
+        assert_eq!(created["matches"], json!(3));
+
+        let (status, list) = post_json("/api/list_subscriptions", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list["intervalHours"], json!(6));
+        let listed = subscription_of(&list, "artist:http one").expect("listed");
+        assert_eq!(listed["id"], created["id"]);
+        assert_eq!(listed["status"], json!("active"));
+        // from now on queues nothing
+        assert!(!fakes.downloads.queued.lock().contains(&1));
+
+        // it is followed now, and says so
+        let (_, preview) = post_json(
+            "/api/preview_subscription",
+            json!({ "query": "artist:http one" }),
+        )
+        .await;
+        assert_eq!(preview["alreadyFollowed"], json!(true));
+        let (status, error) = post_json(
+            "/api/create_subscription",
+            json!({ "query": "ARTIST:http one", "firstRun": "fromNow" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(error["err_message"]
+            .as_str()
+            .unwrap()
+            .contains("followed already"));
+    }
+
+    #[tokio::test]
+    async fn following_everything_queues_in_the_background() {
+        test_state();
+        let fakes = follow_fakes();
+        fakes.search.set("series:http two", &[9102, 9101]);
+
+        let (status, created) = post_json(
+            "/api/create_subscription",
+            json!({ "query": "series:http two", "firstRun": "everything" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        eventually("the galleries being queued", || {
+            let queued = fakes.downloads.queued.lock();
+            queued.contains(&9101) && queued.contains(&9102)
+        })
+        .await;
+        let id = created["id"].clone();
+
+        // a new gallery is found by a check asked for by hand, which answers at once
+        fakes.search.set("series:http two", &[9103, 9102, 9101]);
+        let (status, _) = post_json("/api/check_subscription", json!({ "id": id })).await;
+        assert_eq!(status, StatusCode::OK);
+        eventually("the new gallery being queued", || {
+            fakes.downloads.queued.lock().contains(&9103)
+        })
+        .await;
+        let queued = fakes.downloads.queued.lock().clone();
+        assert_eq!(
+            queued.iter().filter(|id| **id == 9102).count(),
+            1,
+            "{queued:?}"
+        );
+
+        // the check is over once the list shows what it found
+        let mut listed = Value::Null;
+        for _ in 0..100 {
+            let (_, list) = post_json("/api/list_subscriptions", json!({})).await;
+            listed = subscription_of(&list, "series:http two").expect("listed");
+            if listed["status"] == json!("active") && listed["lastNew"] == json!(1) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(listed["matches"], json!(3), "{listed}");
+        assert_eq!(listed["lastNew"], json!(1), "{listed}");
+    }
+
+    #[tokio::test]
+    async fn a_followed_search_can_be_paused_checked_and_deleted() {
+        test_state();
+        let fakes = follow_fakes();
+        fakes.search.set("tag:http three", &[1]);
+        let (_, created) = post_json(
+            "/api/create_subscription",
+            json!({ "query": "tag:http three", "firstRun": "fromNow" }),
+        )
+        .await;
+        let id = created["id"].clone();
+
+        let (status, _) = post_json(
+            "/api/set_subscription_paused",
+            json!({ "id": id, "paused": true }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, list) = post_json("/api/list_subscriptions", json!({})).await;
+        let listed = subscription_of(&list, "tag:http three").unwrap();
+        assert_eq!(listed["status"], json!("paused"));
+        assert_eq!(listed["nextCheckAt"], Value::Null);
+
+        let (status, _) = post_json(
+            "/api/set_subscription_paused",
+            json!({ "id": id, "paused": false }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = post_json("/api/delete_subscription", json!({ "id": id })).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, list) = post_json("/api/list_subscriptions", json!({})).await;
+        assert!(subscription_of(&list, "tag:http three").is_none());
+
+        // there is nothing to act on any more
+        for path in ["/api/delete_subscription", "/api/check_subscription"] {
+            let (status, error) = post_json(path, json!({ "id": id })).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert!(error["err_message"]
+                .as_str()
+                .unwrap()
+                .contains("no such subscription"));
+        }
+        let (status, _) = post_json(
+            "/api/set_subscription_paused",
+            json!({ "id": id, "paused": true }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_query_that_can_not_be_followed_is_refused_with_the_reason() {
+        test_state();
+        let fakes = follow_fakes();
+
+        let (status, error) = post_json(
+            "/api/create_subscription",
+            json!({ "query": "   ", "firstRun": "fromNow" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(error["err_message"].as_str().unwrap().contains("empty"));
+
+        fakes.search.fail("artist:http broken");
+        let (status, error) = post_json(
+            "/api/preview_subscription",
+            json!({ "query": "artist:http broken" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(error["err_message"]
+            .as_str()
+            .unwrap()
+            .contains("Hitomi is not there"));
+
+        // the arguments are checked like those of every command
+        let (status, _) = post_json(
+            "/api/create_subscription",
+            json!({ "query": "a", "firstRun": "sometimes" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let many: Vec<i32> = (50_000..51_001).collect();
+        fakes.search.set("language:http many", &many);
+        let (status, error) = post_json(
+            "/api/create_subscription",
+            json!({ "query": "language:http many", "firstRun": "everything" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(error["err_message"]
+            .as_str()
+            .unwrap()
+            .contains("at most 1000"));
+        let (_, preview) = post_json(
+            "/api/preview_subscription",
+            json!({ "query": "language:http many" }),
+        )
+        .await;
+        assert_eq!(preview["canDownloadAll"], json!(false));
     }
 
     const PEER: [u8; 4] = [192, 0, 2, 1];
@@ -673,6 +1006,8 @@ mod tests {
     async fn without_a_session_only_health_and_login_are_reachable() {
         for (method, uri) in [
             ("POST", "/api/get_config"),
+            ("POST", "/api/list_subscriptions"),
+            ("POST", "/api/create_subscription"),
             ("GET", "/api/events"),
             ("GET", "/api/comics/3651691/cover"),
             ("POST", "/api/no_such_command"),
