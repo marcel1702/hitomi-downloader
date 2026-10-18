@@ -69,9 +69,13 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
 COPY --from=version /repo/Cargo.toml /repo/Cargo.lock ./
 COPY crates crates
 COPY src-tauri src-tauri
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/repo/target \
+# Each platform has caches of its own. The builds of both platforms run at the same time on the
+# same machine, and cargo does not expect another cargo in its package caches: two of them
+# unpacking the same crate, or fetching the same git dependency, fail with "File exists" or
+# "failed to lock file". A cache that is shared between them made the publishing of a release fail.
+RUN --mount=type=cache,id=cargo-registry-$TARGETARCH,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-git-$TARGETARCH,target=/usr/local/cargo/git \
+    --mount=type=cache,id=cargo-target-$TARGETARCH,target=/repo/target \
     set -eux; \
     cargo build --release --locked -p hitomi-server --target "$(cat /rust-target)"; \
     install -D "target/$(cat /rust-target)/release/hitomi-server" /out/hitomi-server
