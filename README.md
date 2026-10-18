@@ -47,7 +47,10 @@ Download and run, no installation of a runtime required.
    built-in reader.
 
 Exporting to PDF or CBZ is also done from the `Local` tab, through the buttons on each comic,
-the right-click menu, or `Export All` for the whole library.
+the right-click menu, or `Export All` for the whole library. Tick the checkboxes of several comics
+(the selection stays when you change the page, `Select All` takes every page) and `Export All`
+becomes `Export Selection`. The `Search` tab works the same way: `Download All` below the search
+fields becomes `Download Selection`.
 
 📹 The video below walks through the whole flow. **It is safe for work.**
 

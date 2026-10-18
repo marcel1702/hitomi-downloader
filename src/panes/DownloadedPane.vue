@@ -153,8 +153,7 @@ async function showExportDirInFileManager() {
   await revealPath(store.config.exportDir)
 }
 
-async function exportAllCbz() {
-  const comics = downloadedComics.value
+async function exportCbz(comics: Comic[]) {
   if (comics.length === 0) return
   message.info(t('downloaded_pane.export_all_cbz_started', { count: comics.length }))
   for (const comic of comics) {
@@ -165,8 +164,7 @@ async function exportAllCbz() {
   }
 }
 
-async function exportAllPdf() {
-  const comics = downloadedComics.value
+async function exportPdf(comics: Comic[]) {
   if (comics.length === 0) return
   message.info(t('downloaded_pane.export_all_pdf_started', { count: comics.length }))
   for (const comic of comics) {
@@ -177,18 +175,46 @@ async function exportAllPdf() {
   }
 }
 
-const { selectedIds, selectionAreaRef, selectableRefs, updateSelectedIds, unselectAll, onContextMenu, toggleSelection, scrollToTop } = useMultiSelect()
+const {
+  selectedIds,
+  selectionAreaRef,
+  selectableRefs,
+  updateSelectedIds,
+  unselectAll,
+  onContextMenu,
+  toggleSelection,
+  scrollToTop,
+  forgetElements,
+  clearSelection,
+} = useMultiSelect()
 
-// a new page starts at its first comic, not where the previous page was scrolled to
-watch(currentPage, scrollToTop)
+// a new page starts at its first comic, not where the previous page was scrolled to. The
+// selection stays: it holds the comics of every page.
+watch(currentPage, () => {
+  forgetElements()
+  scrollToTop()
+})
 
 const { contextMenuX, contextMenuY, contextMenuShowing, contextMenuOptions, showContextMenu } = useContextMenu()
 
-watch(currentPageComics, () => {
-  const downloadedIds = new Set(currentPageComics.value.map(comic => comic.id))
-  // only retain selected ids that are current page
-  selectedIds.value = new Set([...selectedIds.value].filter((comicId) => downloadedIds.has(comicId)))
+// a comic that is no longer in the list can not stay selected
+watch(downloadedComics, () => {
+  const ids = new Set(downloadedComics.value.map((comic) => comic.id))
+  selectedIds.value = new Set([...selectedIds.value].filter((id) => ids.has(id)))
 })
+
+// The comics of all pages that are selected, in the order of the list
+const selectedComics = computed<Comic[]>(() => downloadedComics.value.filter((comic) => selectedIds.value.has(comic.id)))
+const hasSelection = computed<boolean>(() => selectedComics.value.length > 0)
+
+// what the buttons above the list act on: the selection, or without one all comics
+const targetComics = computed<Comic[]>(() => (hasSelection.value ? selectedComics.value : downloadedComics.value))
+
+function selectAllPages() {
+  selectedIds.value = new Set(downloadedComics.value.map((comic) => comic.id))
+  // the cards of this page get their look from the selection area as well
+  selectionAreaRef.value?.selection?.select(selectableRefs.value)
+}
 
 
 function useContextMenu() {
@@ -209,11 +235,7 @@ function useContextMenu() {
           if (selectionAreaRef.value === undefined) {
             return
           }
-          const selection = selectionAreaRef.value.selection
-          if (selection === undefined) {
-            return
-          }
-          selection.select(selectableRefs.value)
+          selectAllPages()
           contextMenuShowing.value = false
         },
       },
@@ -230,14 +252,7 @@ function useContextMenu() {
       ),
       props: {
         onClick: () => {
-          currentPageComics.value
-            .filter((comic) => selectedIds.value.has(comic.id))
-            .forEach(async (comic) => {
-              const result = await commands.exportPdf(comic)
-              if (result.status === 'error') {
-                console.error(result.error)
-              }
-            })
+          exportPdf(selectedComics.value)
           contextMenuShowing.value = false
         },
       },
@@ -252,14 +267,7 @@ function useContextMenu() {
       ),
       props: {
         onClick: () => {
-          currentPageComics.value
-            .filter((comic) => selectedIds.value.has(comic.id))
-            .forEach(async (comic) => {
-              const result = await commands.exportCbz(comic)
-              if (result.status === 'error') {
-                console.error(result.error)
-              }
-            })
+          exportCbz(selectedComics.value)
           contextMenuShowing.value = false
         },
       },
@@ -300,17 +308,28 @@ function useContextMenu() {
       </n-button>
     </n-input-group>
     <div class="flex gap-2 px-2">
-      <n-button size="small" :disabled="downloadedComics.length === 0" @click="exportAllCbz">
+      <n-button size="small" :disabled="targetComics.length === 0" @click="exportCbz(targetComics)">
         <template #icon>
           <n-icon size="18"><PhFileZip /></n-icon>
         </template>
-        {{ t('downloaded_pane.export_all_cbz') }} ({{ downloadedComics.length }})
+        {{ hasSelection ? t('downloaded_pane.export_selection_cbz') : t('downloaded_pane.export_all_cbz') }}
+        ({{ targetComics.length }})
       </n-button>
-      <n-button size="small" :disabled="downloadedComics.length === 0" @click="exportAllPdf">
+      <n-button size="small" :disabled="targetComics.length === 0" @click="exportPdf(targetComics)">
         <template #icon>
           <n-icon size="18"><PhFilePdf /></n-icon>
         </template>
-        {{ t('downloaded_pane.export_all_pdf') }} ({{ downloadedComics.length }})
+        {{ hasSelection ? t('downloaded_pane.export_selection_pdf') : t('downloaded_pane.export_all_pdf') }}
+        ({{ targetComics.length }})
+      </n-button>
+      <n-button v-if="hasSelection" class="ml-auto" size="small" quaternary @click="clearSelection">
+        {{ t('common.clear_selection') }}
+      </n-button>
+      <n-button v-else class="ml-auto" size="small" quaternary :disabled="downloadedComics.length === 0" @click="selectAllPages">
+        <template #icon>
+          <n-icon size="18"><PhChecks /></n-icon>
+        </template>
+        {{ t('common.select_all') }}
       </n-button>
     </div>
 

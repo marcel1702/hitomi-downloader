@@ -43,6 +43,17 @@ export function useMultiSelect() {
     container?.scrollTo({ top: 0, behavior: 'instant' })
   }
 
+  // The cards are replaced when the page changes. The selection area still holds the old ones,
+  // so forget them without an event, which would take their ids out of the selection.
+  function forgetElements() {
+    selectionAreaRef.value?.selection?.clearSelection(true, true)
+  }
+
+  function clearSelection() {
+    forgetElements()
+    selectedIds.value = new Set()
+  }
+
   function toggleSelection(id: number, checked: boolean) {
     const newSelectedIds = new Set(selectedIds.value)
     if (checked) {
@@ -62,5 +73,7 @@ export function useMultiSelect() {
     onContextMenu,
     toggleSelection,
     scrollToTop,
+    forgetElements,
+    clearSelection,
   }
 }

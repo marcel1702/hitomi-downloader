@@ -21,6 +21,7 @@
     "download_directory": "Download-Ordner",
     "export_directory": "Export-Ordner",
     "select_all": "Alle auswählen",
+    "clear_selection": "Auswahl aufheben",
     "continue": "Fortsetzen",
     "pause": "Pausieren",
     "cancel": "Abbrechen"
@@ -90,6 +91,7 @@
     "comic_id_invalid": "Ungültiges Format der Comic-ID",
     "enter_comic_id_or_url": "Bitte gib eine Comic-ID oder URL ein",
     "download_all": "Alle herunterladen",
+    "download_selection": "Auswahl herunterladen",
     "download_all_started": "{count} Comics werden zum Download eingereiht …",
     "download_all_queued": "{count} Comics zum Download eingereiht",
     "download_all_failed": "Downloads konnten nicht eingereiht werden",
@@ -110,6 +112,8 @@
     "cbz_exported": "CBZ exportiert",
     "export_all_cbz": "Alle als CBZ exportieren",
     "export_all_pdf": "Alle als PDF exportieren",
+    "export_selection_cbz": "Auswahl als CBZ exportieren",
+    "export_selection_pdf": "Auswahl als PDF exportieren",
     "export_all_cbz_started": "{count} Comics werden als CBZ exportiert …",
     "export_all_pdf_started": "{count} Comics werden als PDF exportiert …"
   },

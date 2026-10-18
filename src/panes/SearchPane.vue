@@ -74,9 +74,15 @@ async function search(query: string, pageNum: number) {
   searching.value = false
 }
 
+// the comics of the results that are selected, or without a selection all of the search
+const selectedCount = computed<number>(() => selectedIds.value.size)
+const downloadCount = computed<number>(() =>
+  selectedCount.value > 0 ? selectedCount.value : (store.searchResult?.ids.length ?? 0),
+)
+
 async function downloadAll() {
   if (store.searchResult === undefined || downloadingAll.value) return
-  const ids = store.searchResult.ids
+  const ids = selectedCount.value > 0 ? [...selectedIds.value] : store.searchResult.ids
   if (ids.length === 0) return
 
   downloadingAll.value = true
@@ -252,7 +258,7 @@ function useSuggestion() {
   }
 }
 
-const { selectedIds, selectionAreaRef, selectableRefs, updateSelectedIds, unselectAll, onContextMenu, toggleSelection, scrollToTop } = useMultiSelect()
+const { selectedIds, selectionAreaRef, selectableRefs, updateSelectedIds, unselectAll, onContextMenu, toggleSelection, scrollToTop, clearSelection } = useMultiSelect()
 
 // new results, from another search or another page, start at their first comic
 watch(() => store.searchResult, scrollToTop)
@@ -383,6 +389,23 @@ defineExpose({ search })
       </n-button>
     </n-input-group>
 
+    <div class="flex gap-2 px-2">
+      <n-button
+        size="small"
+        type="warning"
+        :loading="downloadingAll"
+        :disabled="downloadCount === 0"
+        @click="downloadAll">
+        <template #icon>
+          <n-icon size="18"><PhCloud /></n-icon>
+        </template>
+        {{ selectedCount > 0 ? t('search_pane.download_selection') : t('search_pane.download_all') }} ({{ downloadCount }})
+      </n-button>
+      <n-button v-if="selectedCount > 0" class="ml-auto" size="small" quaternary @click="clearSelection">
+        {{ t('common.clear_selection') }}
+      </n-button>
+    </div>
+
     <SelectionArea
       v-if="store.searchResult !== undefined"
       ref="selectionAreaRef"
@@ -419,23 +442,11 @@ defineExpose({ search })
         :on-clickoutside="() => (contextMenuShowing = false)" />
     </SelectionArea>
 
-    <div v-if="store.searchResult !== undefined" class="flex items-center gap-2 box-border px-2 pt-0 mt-auto">
-      <n-pagination
-        class="flex-1"
-        :page-count="store.searchResult.totalPage"
-        :page="currentPage"
-        @update:page="handlePageChange" />
-      <n-button
-        size="small"
-        type="warning"
-        :loading="downloadingAll"
-        :disabled="store.searchResult.ids.length === 0"
-        @click="downloadAll">
-        <template #icon>
-          <n-icon size="18"><PhCloud /></n-icon>
-        </template>
-        {{ t('search_pane.download_all') }} ({{ store.searchResult.ids.length }})
-      </n-button>
-    </div>
+    <n-pagination
+      v-if="store.searchResult !== undefined"
+      class="box-border px-2 pb-2 pt-0 mt-auto"
+      :page-count="store.searchResult.totalPage"
+      :page="currentPage"
+      @update:page="handlePageChange" />
   </div>
 </template>
