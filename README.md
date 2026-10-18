@@ -46,6 +46,10 @@ Download and run, no installation of a runtime required.
    archive. Click the cover to open it in the `Comic` tab, where `Read` opens it in the
    built-in reader.
 
+In the reader the mouse wheel turns the pages (`M` switches to scrolling, `F` fits the width, `T`
+shows thumbnails), and `S` starts or stops a slideshow that turns a page every 1 to 60 seconds, as
+set next to the play button. It stops at the last page and as soon as you turn a page yourself.
+
 Exporting to PDF or CBZ is also done from the `Local` tab, through the buttons on each comic,
 the right-click menu, or `Export All` for the whole library. Tick the checkboxes of several comics
 (the selection stays when you change the page, `Select All` takes every page) and `Export All`
