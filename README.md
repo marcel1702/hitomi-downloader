@@ -65,6 +65,40 @@ https://github.com/user-attachments/assets/d2d0e577-c074-41ca-996f-445d52e2cce5
 Downloads made by older versions, which stored loose images, keep working: the reader and
 both exports fall back to the folder when no archive is present.
 
+## 📚 Using the download directory with Kavita
+
+The download directory can be the folder of a [Kavita](https://www.kavitareader.com) library, at
+any time, also while a download runs. Kavita scans for the **file types** you choose for the
+library, so set them as follows:
+
+- **File types: `Archive` only.** The `.cbz` is the only file Kavita is meant to find, and it
+  carries everything it needs: the pages and the `ComicInfo.xml` with title, series, artists,
+  tags and language. `metadata.json` and `cover.webp` are for this app, Kavita skips them.
+- Do not add `Image` to the file types. Kavita counts `.webp` and `.avif` as images, so it
+  would list the pages of a download that is still running as a series of their own.
+
+**Why an unfinished download is never listed.** Kavita decides by the last extension of a
+file name. The archive is therefore written as `<name>.cbz.tmp`, which Kavita reads as `.tmp`
+and ignores. Only when it is complete and written to the disk it is renamed to `<name>.cbz`,
+which is a single step, and only after that are the pages it was made from deleted. A comic
+that is downloaded again replaces its archive in the same way, Kavita sees the old or the new
+one and never half of it.
+
+**Where the pages are while a comic downloads**
+- **Desktop app:** in a `.downloading-<name>` folder next to the comic. They are images, not
+  archives, so Kavita ignores them with the file types above. If you do have `Image` enabled,
+  add the exclude pattern `.downloading-*/` in the library settings of Kavita. Kavita matches
+  the pattern against directory names written as `name/`.
+- **Web version:** outside of the library, in `HITOMI_TEMP_DIR` (by default `downloading` in
+  the config directory). The library only ever holds the `.cbz.tmp` and the finished `.cbz`,
+  whatever the file types of Kavita are, and a network share gets the archive written once.
+  Plan for 10 to 100 MB of space per running comic there, twice that with the default of two
+  comics at once. The server refuses to start if that directory lies inside the library.
+
+A download that is cancelled or interrupted leaves its pages behind, and a crash may leave a
+`.cbz.tmp`. Both are harmless, Kavita ignores them, and they are replaced or removed when the
+comic is downloaded again.
+
 ## ⚠️ About antivirus false positives
 
 Unsigned binaries from small projects get flagged regularly, since a code signing certificate
