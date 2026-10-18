@@ -59,7 +59,9 @@ jobs:
 
       # The hash of a password contains `$`, which Compose reads as the start of a variable
       # unless the value is in single quotes in the .env file. The example has to be written so
-      # that the value arrives as it was written.
+      # that the value arrives as it was written. `config` prints every `$` doubled, so that
+      # what it prints can be read again. That the value reaches a container as written is shown
+      # by the image job, which starts the compose file for real.
       - name: The compose file, with the example .env
         run: |
           set -eu
@@ -72,6 +74,7 @@ jobs:
           docker compose config --quiet
           docker compose --profile kavita config --quiet
           got=$(docker compose config --format json | jq -r '.services["hitomi-downloader"].environment.HITOMI_PASSWORD_HASH')
+          got=${got//\$\$/\$}
           test "$got" = "$hash" || { echo "the hash arrived as '$got'" >&2; exit 1; }
           # without a login or a library the compose file refuses, saying what is missing
           if env -u HITOMI_USERNAME docker compose --env-file /dev/null config > /dev/null 2> "$RUNNER_TEMP/compose-error"; then
@@ -101,6 +104,41 @@ jobs:
           REQUIRE_PUID_TESTS: '1'
           REQUIRE_HEALTH_STATUS: '1'
         run: docker/smoke-test.sh
+
+      # The compose file as it is shipped, with an .env written like the example: the hash has
+      # to arrive with its `$`, the long form of the bind mount has to work, and the login
+      # has to accept the password the hash was made from.
+      - name: The compose file runs the image
+        run: |
+          set -eu
+          library="$RUNNER_TEMP/library"
+          mkdir -p "$library"
+          chmod 0777 "$library"
+          hash=$(printf 'compose test password\n' | docker run --rm -i hitomi-downloader:ci hash-password)
+          {
+            echo "HITOMI_USERNAME=admin"
+            printf "HITOMI_PASSWORD_HASH='%s'\n" "$hash"
+            echo "LIBRARY_PATH=$library"
+            echo "HITOMI_PORT=18080"
+          } > .env
+          cat > compose.ci.yml << 'EOF'
+          services:
+            hitomi-downloader:
+              image: hitomi-downloader:ci
+              pull_policy: never
+          EOF
+          docker compose -f docker-compose.yml -f compose.ci.yml up -d hitomi-downloader
+          status=starting
+          for _ in $(seq 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' hitomi-downloader)
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          test "$status" = healthy || { docker compose logs hitomi-downloader; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+            http://127.0.0.1:18080/auth/login -d '{"username":"admin","password":"compose test password"}')
+          test "$code" = 200 || { echo "the login answered $code" >&2; docker compose logs hitomi-downloader; exit 1; }
+          docker compose -f docker-compose.yml -f compose.ci.yml down -v
 
   publish:
     name: Publish (amd64 and arm64)
