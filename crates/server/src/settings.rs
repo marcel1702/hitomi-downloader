@@ -16,6 +16,9 @@ pub struct Settings {
     pub library_dir: Option<PathBuf>,
     /// The exports (`HITOMI_EXPORT_DIR`), fixed for as long as it is set
     pub export_dir: Option<PathBuf>,
+    /// Where the pages of a running download are kept (`HITOMI_TEMP_DIR`), by default
+    /// `downloading` in the config dir. Never the library: a scan of it must not see them.
+    pub temp_dir: PathBuf,
     /// The frontend built by `pnpm build:web` (`HITOMI_WEB_DIR`)
     pub web_dir: PathBuf,
     /// `HITOMI_HOST` and `HITOMI_PORT`
@@ -96,11 +99,15 @@ impl Settings {
             Some(value) => bail!("HITOMI_TRUST_FORWARDED_FOR `{value}` is neither true nor false"),
         };
 
+        let config_dir =
+            var("HITOMI_CONFIG_DIR").map_or_else(|| PathBuf::from("config"), PathBuf::from);
+
         Ok(Settings {
-            config_dir: var("HITOMI_CONFIG_DIR")
-                .map_or_else(|| PathBuf::from("config"), PathBuf::from),
+            config_dir: config_dir.clone(),
             library_dir: var("HITOMI_LIBRARY_DIR").map(PathBuf::from),
             export_dir: var("HITOMI_EXPORT_DIR").map(PathBuf::from),
+            temp_dir: var("HITOMI_TEMP_DIR")
+                .map_or_else(|| config_dir.join("downloading"), PathBuf::from),
             web_dir: var("HITOMI_WEB_DIR").map_or_else(|| PathBuf::from("dist-web"), PathBuf::from),
             addr: SocketAddr::new(host, port),
             auth: AuthSettings {
@@ -154,6 +161,24 @@ mod tests {
         assert_eq!(settings.library_dir, Some(PathBuf::from("/data/library")));
         assert_eq!(settings.export_dir, Some(PathBuf::from("/data/export")));
         assert_eq!(settings.web_dir, PathBuf::from("/app/web"));
+    }
+
+    #[test]
+    fn the_pages_of_downloads_default_to_the_config_dir() {
+        let settings = settings(&[("HITOMI_CONFIG_DIR", "/config")]).unwrap();
+        assert_eq!(settings.temp_dir, PathBuf::from("/config/downloading"));
+        let settings = super::Settings::from_vars(|_| None).unwrap();
+        assert_eq!(settings.temp_dir, PathBuf::from("config/downloading"));
+
+        let settings = settings_with(&[
+            ("HITOMI_CONFIG_DIR", "/config"),
+            ("HITOMI_TEMP_DIR", "/scratch"),
+        ]);
+        assert_eq!(settings.temp_dir, PathBuf::from("/scratch"));
+    }
+
+    fn settings_with(vars: &[(&str, &str)]) -> Settings {
+        settings(vars).unwrap()
     }
 
     #[test]

@@ -89,6 +89,46 @@ impl PinnedDirs {
     }
 }
 
+/// Create the directory the pages of running downloads are kept in, and check that it is usable
+///
+/// It has to be writable, and it must not lie inside `library`: the point of keeping the
+/// pages elsewhere is that a scan of the library, by Kavita for example, never finds them.
+pub fn check_temp_dir(temp_dir: &std::path::Path, library: &std::path::Path) -> anyhow::Result<()> {
+    let existed = temp_dir.exists();
+    std::fs::create_dir_all(temp_dir).map_err(|err| {
+        anyhow::anyhow!(
+            "Failed to create the directory for the pages of running downloads, `{}`: {err}. Set HITOMI_TEMP_DIR to a directory the server may write to",
+            temp_dir.display()
+        )
+    })?;
+    // creating a directory does not show that files can be written to it
+    let probe = temp_dir.join(format!(".write-test-{}", std::process::id()));
+    std::fs::write(&probe, b"").and_then(|()| std::fs::remove_file(&probe)).map_err(|err| {
+        anyhow::anyhow!(
+            "The directory for the pages of running downloads, `{}`, is not writable: {err}. Set HITOMI_TEMP_DIR to a directory the server may write to",
+            temp_dir.display()
+        )
+    })?;
+    let (temp_resolved, library_resolved) = (temp_dir.canonicalize()?, library.canonicalize()?);
+    if temp_resolved.starts_with(&library_resolved) {
+        if !existed {
+            // do not leave the directories of a refused setup behind in the library
+            for dir in temp_resolved
+                .ancestors()
+                .take_while(|dir| *dir != library_resolved)
+            {
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
+        anyhow::bail!(
+            "The directory for the pages of running downloads, `{}`, lies inside the library `{}`, where a scan of the library would find unfinished downloads. Set HITOMI_TEMP_DIR to a directory outside of it",
+            temp_dir.display(),
+            library.display()
+        );
+    }
+    Ok(())
+}
+
 /// How many comics the cache keeps, about 40 search pages
 const COMIC_CACHE_CAPACITY: usize = 1000;
 
@@ -244,6 +284,60 @@ mod tests {
         std::fs::create_dir_all(&pinned.download_dir).unwrap();
         std::os::unix::fs::symlink(&pinned.download_dir, &pinned.export_dir).unwrap();
         assert!(pinned.check().is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_pages_of_downloads_get_a_usable_directory_outside_the_library() {
+        let (root, pinned) = temp_dirs("library", "export");
+        pinned.check().unwrap();
+        let temp = root.join("config").join("downloading");
+        check_temp_dir(&temp, &pinned.download_dir).unwrap();
+        assert!(temp.is_dir());
+        // the write test leaves nothing behind
+        assert_eq!(std::fs::read_dir(&temp).unwrap().count(), 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_temp_dir_in_the_library_is_refused() {
+        let (root, pinned) = temp_dirs("library", "export");
+        pinned.check().unwrap();
+        for inside in [
+            pinned.download_dir.clone(),
+            pinned.download_dir.join("pages"),
+        ] {
+            let err = check_temp_dir(&inside, &pinned.download_dir)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("HITOMI_TEMP_DIR") && err.contains("inside the library"),
+                "{err}"
+            );
+        }
+        // what the refused setup created is gone again, the library is as it was
+        assert_eq!(std::fs::read_dir(&pinned.download_dir).unwrap().count(), 0);
+        // also when the directory was new and several levels deep
+        let deep = pinned.download_dir.join("a").join("b");
+        assert!(check_temp_dir(&deep, &pinned.download_dir).is_err());
+        assert_eq!(std::fs::read_dir(&pinned.download_dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_temp_dir_that_can_not_be_created_is_explained() {
+        let (root, pinned) = temp_dirs("library", "export");
+        pinned.check().unwrap();
+        // a file where a directory is needed
+        let blocker = root.join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let err = check_temp_dir(&blocker.join("downloading"), &pinned.download_dir)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("blocker") && err.contains("HITOMI_TEMP_DIR"),
+            "{err}"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
