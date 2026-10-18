@@ -7,8 +7,8 @@
 A GUI-based multi-threaded downloader for [hitomi.la](https://hitomi.la), built with [Tauri](https://v2.tauri.app/start/).
 
 Comics are downloaded straight into a `.cbz` archive with a `ComicInfo.xml` that follows the
-ComicRack v2.1 schema, so they drop into Kavita, Komga or any other comic reader without a
-conversion step.
+ComicRack v2.1 schema, so they open in any comic reader or comic server without a conversion
+step.
 
 ## 📥 Download
 
@@ -29,7 +29,7 @@ Download and run, no installation of a runtime required.
 | 📂 Export | One-click export to PDF or CBZ into a separate export directory. |
 | 🌐 English and German | The interface ships both languages and switches at runtime. |
 | 🗂️ Custom folder structure | Freely configurable naming from fields like type, artist, title, language and id. |
-| 🐳 Web version | The same interface in the browser, as a Docker image for a server: [one place](#-web-version-docker) for the downloads, on a folder that Kavita reads. |
+| 🐳 Web version | The same interface in the browser, as a Docker image for a server: [one place](#-web-version-docker) for the downloads, on a folder of the server. |
 
 ## 🖥️ Screenshots
 
@@ -56,7 +56,7 @@ https://github.com/user-attachments/assets/d2d0e577-c074-41ca-996f-445d52e2cce5
 ## 🐳 Web version (Docker)
 
 Besides the desktop app there is a web version for a server: the same interface in the browser,
-one place to manage the downloads from any device, and the comics in a folder that Kavita reads.
+one place to manage the downloads from any device, and the comics in a folder of the server.
 It is a Docker image for `amd64` and `arm64`, `ghcr.io/marcel1702/hitomi-downloader`. It does not
 contain the desktop app, there is no GTK or WebKit in it.
 
@@ -66,8 +66,7 @@ contain the desktop app, there is no GTK or WebKit in it.
 2. Copy `.env.example` to `.env` next to [`docker-compose.yml`](docker-compose.yml) and fill it in: the
    login, the hash, and `LIBRARY_PATH`, the folder on the Docker host where the comics go. Keep the single
    quotes around the hash, they stop Docker Compose from reading its `$` as variables.
-3. `docker compose up -d`, then open `http://<server>:8080` and log in. Add `--profile kavita` to start a
-   Kavita on the same folder as well.
+3. `docker compose up -d`, then open `http://<server>:8080` and log in.
 
 The image is as visible as this repository. While that is private, `docker login ghcr.io` with a token
 that may read packages comes first.
@@ -97,11 +96,11 @@ All of them are environment variables. The login has no default: **the server do
 The library is only a directory for the container, it can be a folder of the Docker host, a named volume,
 or a folder that is itself an NFS or SMB share mounted on the host. No path is a given, mount it where you
 like and tell the server with `HITOMI_LIBRARY_DIR`. The comics hold no path, so the same folder can be called
-one thing in Kavita and another here, and be moved to another mount point later.
+one thing in another container and another here, and be moved to another mount point later.
 
 - **Owner and rights.** The files belong to `PUID:PGID`. On an NFS share the numeric ids count, and its
-  settings (root squash, a user it maps everyone to) decide who may write. `UMASK` decides whether the Kavita
-  user can read what is written. **The library is never `chown`ed**, only `/config` is handed to the user.
+  settings (root squash, a user it maps everyone to) decide who may write. `UMASK` decides whether other users
+  can read what is written. **The library is never `chown`ed**, only `/config` is handed to the user.
 - **It checks at the start.** A directory the user can not write, with the user, its owner and what to do about
   it in the message, and a directory where nothing is mounted, which would lose its files with the container.
 - **A missing mount.** With the short form of a bind mount Docker makes an empty folder on the host if the source
@@ -122,7 +121,7 @@ without https: put a reverse proxy in front of it, set `HITOMI_PUBLIC_URL` to th
 
 In the browser a comic is saved on the device you sit at with **Download PDF** and **Download CBZ**, under its
 real name. **Export All** and the entries "to server" of the context menu write into the export directory of
-the server instead. Using the library with Kavita, with the file type `Archive`, is described below.
+the server instead.
 
 ### Versions and updates
 
@@ -143,39 +142,24 @@ only has its own tag. `docker compose pull && docker compose up -d` updates. To 
 Downloads made by older versions, which stored loose images, keep working: the reader and
 both exports fall back to the folder when no archive is present.
 
-## 📚 Using the download directory with Kavita
+## 🛡️ Why an unfinished download is never in the library
 
-The download directory can be the folder of a [Kavita](https://www.kavitareader.com) library, at
-any time, also while a download runs. Kavita scans for the **file types** you choose for the
-library, so set them as follows:
-
-- **File types: `Archive` only.** The `.cbz` is the only file Kavita is meant to find, and it
-  carries everything it needs: the pages and the `ComicInfo.xml` with title, series, artists,
-  tags and language. `metadata.json` and `cover.webp` are for this app, Kavita skips them.
-- Do not add `Image` to the file types. Kavita counts `.webp` and `.avif` as images, so it
-  would list the pages of a download that is still running as a series of their own.
-
-**Why an unfinished download is never listed.** Kavita decides by the last extension of a
-file name. The archive is therefore written as `<name>.cbz.tmp`, which Kavita reads as `.tmp`
-and ignores. Only when it is complete and written to the disk it is renamed to `<name>.cbz`,
-which is a single step, and only after that are the pages it was made from deleted. A comic
-that is downloaded again replaces its archive in the same way, Kavita sees the old or the new
-one and never half of it.
+Anything that scans the download directory decides by the last extension of a file name. The
+archive is therefore written as `<name>.cbz.tmp` and only when it is complete and written to
+the disk it is renamed to `<name>.cbz`, which is a single step. The pages it was made from are
+deleted after that. A comic that is downloaded again replaces its archive the same way, so a
+scanner sees the old or the new archive and never half of one.
 
 **Where the pages are while a comic downloads**
-- **Desktop app:** in a `.downloading-<name>` folder next to the comic. They are images, not
-  archives, so Kavita ignores them with the file types above. If you do have `Image` enabled,
-  add the exclude pattern `.downloading-*/` in the library settings of Kavita. Kavita matches
-  the pattern against directory names written as `name/`.
+- **Desktop app:** in a `.downloading-<name>` folder next to the comic.
 - **Web version:** outside of the library, in `HITOMI_TEMP_DIR` (by default `downloading` in
   the config directory). The library only ever holds the `.cbz.tmp` and the finished `.cbz`,
-  whatever the file types of Kavita are, and a network share gets the archive written once.
-  Plan for 10 to 100 MB of space per running comic there, twice that with the default of two
-  comics at once. The server refuses to start if that directory lies inside the library.
+  and a network share gets the archive written once. Plan for 10 to 100 MB of space per
+  running comic there, twice that with the default of two comics at once. The server refuses
+  to start if that directory lies inside the library.
 
 A download that is cancelled or interrupted leaves its pages behind, and a crash may leave a
-`.cbz.tmp`. Both are harmless, Kavita ignores them, and they are replaced or removed when the
-comic is downloaded again.
+`.cbz.tmp`. Both are replaced or removed when the comic is downloaded again.
 
 ## ⚠️ About antivirus false positives
 

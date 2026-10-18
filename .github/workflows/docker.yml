@@ -72,7 +72,6 @@ jobs:
             echo "LIBRARY_PATH=$RUNNER_TEMP"
           } > .env
           docker compose config --quiet
-          docker compose --profile kavita config --quiet
           got=$(docker compose config --format json | jq -r '.services["hitomi-downloader"].environment.HITOMI_PASSWORD_HASH')
           got=${got//\$\$/\$}
           test "$got" = "$hash" || { echo "the hash arrived as '$got'" >&2; exit 1; }

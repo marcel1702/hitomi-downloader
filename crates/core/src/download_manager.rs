@@ -1412,7 +1412,7 @@ mod tests {
     }
 
     const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "gif", "avif"];
-    /// What Kavita takes for an archive, matched against the last extension only
+    /// What a scanner takes for an archive, matched against the last extension only
     const ARCHIVE_EXTENSIONS: [&str; 8] = ["cbz", "zip", "rar", "cbr", "7z", "cb7", "cbt", "gz"];
 
     fn extension_of(name: &str) -> String {
@@ -1532,7 +1532,7 @@ mod tests {
                 file_name == format!("{name}.cbz.tmp") || file_name == format!("{name}.cbz"),
                 "unexpected file in the library: {file}"
             );
-            // by the last extension, as Kavita matches it, the archive in the making is `.tmp`
+            // by the last extension, as a scanner matches it, the archive in the making is `.tmp`
             if file_name.ends_with(".tmp") {
                 assert!(
                     !ARCHIVE_EXTENSIONS.contains(&extension_of(file).as_str()),
