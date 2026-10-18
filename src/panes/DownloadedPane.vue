@@ -219,7 +219,9 @@ function useContextMenu() {
       },
     },
     {
-      label: t('common.export_pdf'),
+      // in the web version the menu writes into the export folder of the server, the buttons
+      // of a comic hand the file to the browser
+      label: isWeb ? t('common.export_pdf_to_server') : t('common.export_pdf'),
       key: 'export-pdf',
       icon: () => (
         <n-icon size="20">
@@ -241,7 +243,7 @@ function useContextMenu() {
       },
     },
     {
-      label: t('common.export_cbz'),
+      label: isWeb ? t('common.export_cbz_to_server') : t('common.export_cbz'),
       key: 'export-cbz',
       icon: () => (
         <n-icon size="20">

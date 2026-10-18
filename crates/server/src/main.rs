@@ -13,6 +13,7 @@ mod auth;
 mod commands;
 mod error;
 mod events;
+mod files;
 mod images;
 mod paths;
 mod settings;
@@ -28,7 +29,7 @@ use hitomi_core::{
 use serde_json::{json, Value};
 use tokio::{
     net::TcpListener,
-    sync::{broadcast, watch},
+    sync::{broadcast, watch, Semaphore},
 };
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -39,6 +40,9 @@ use crate::{
     settings::Settings,
     state::{AppState, ComicCache, PinnedDirs},
 };
+
+/// PDFs built at the same time, each of them is held in memory while it is built
+const MAX_PDFS_AT_ONCE: usize = 2;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -72,10 +76,11 @@ async fn run() -> anyhow::Result<()> {
             comics: comics.clone(),
         },
     )?;
-    let pinned_dirs = PinnedDirs {
-        download_dir: settings.library_dir.clone(),
-        export_dir: settings.export_dir.clone(),
-    };
+    let pinned_dirs = PinnedDirs::resolve(
+        settings.library_dir.as_ref(),
+        settings.export_dir.as_ref(),
+        &context.config().read(),
+    );
     pin_dirs(&context, &pinned_dirs)?;
     logger::init(&context, &[env!("CARGO_CRATE_NAME")])?;
     let auth = Auth::new(&settings.auth, &settings.config_dir, Policy::default())?;
@@ -84,10 +89,13 @@ async fn run() -> anyhow::Result<()> {
     let state = AppState {
         context: context.clone(),
         pinned_dirs,
+        pdf_permits: Arc::new(Semaphore::new(MAX_PDFS_AT_ONCE)),
         events,
         comics,
         shutdown,
     };
+    // a crash may have left PDFs of downloads that were running
+    files::clear_temp_dir(&files::temp_dir(&state));
 
     if !settings.web_dir.join("index.html").exists() {
         tracing::warn!(
@@ -156,7 +164,7 @@ fn app(state: AppState, auth: Auth, web_dir: &Path) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .route("/events", get(events::events))
-        .nest("/comics", images::router())
+        .nest("/comics", images::router().merge(files::router()))
         .merge(commands::router())
         .fallback(api_not_found);
 
@@ -175,8 +183,9 @@ fn app(state: AppState, auth: Auth, web_dir: &Path) -> Router {
     Router::new().nest("/auth", auth.router()).merge(protected)
 }
 
-/// Make the download and export dir from the environment the ones in the config
+/// Check the library and export dir, and make them the ones in the config
 fn pin_dirs(context: &Context, pinned_dirs: &PinnedDirs) -> anyhow::Result<()> {
+    pinned_dirs.check()?;
     let mut config = context.config().write();
     let before = (config.download_dir.clone(), config.export_dir.clone());
     pinned_dirs.apply(&mut config);
@@ -288,14 +297,15 @@ mod tests {
             )
             .unwrap();
             let pinned_dirs = PinnedDirs {
-                download_dir: Some(root.join("library")),
-                export_dir: Some(root.join("export")),
+                download_dir: root.join("library"),
+                export_dir: root.join("export"),
             };
             pin_dirs(&context, &pinned_dirs).unwrap();
             let (_, shutdown) = watch::channel(false);
             let state = AppState {
                 context,
                 pinned_dirs,
+                pdf_permits: Arc::new(Semaphore::new(MAX_PDFS_AT_ONCE)),
                 events,
                 comics,
                 shutdown,
@@ -457,8 +467,9 @@ mod tests {
         assert_eq!(config["downloadDir"], json!(root.join("library")));
         assert_eq!(config["exportDir"], json!(root.join("export")));
 
-        // a frontend that tries to move the library is overruled, the rest is saved
+        // a frontend that tries to move the library or the exports is overruled, the rest is saved
         config["downloadDir"] = json!("/somewhere/else");
+        config["exportDir"] = json!("/etc");
         config["dirFmt"] = json!("{id}");
         let (status, body) = request(
             "POST",
@@ -471,6 +482,7 @@ mod tests {
         let (_, body) = request("POST", "/api/get_config", None).await;
         let saved = json_of(&body);
         assert_eq!(saved["downloadDir"], json!(root.join("library")));
+        assert_eq!(saved["exportDir"], json!(root.join("export")));
         assert_eq!(saved["dirFmt"], json!("{id}"));
         // and so is the file on disk
         let on_disk: Value = serde_json::from_slice(
@@ -478,6 +490,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(on_disk["downloadDir"], json!(root.join("library")));
+        assert_eq!(on_disk["exportDir"], json!(root.join("export")));
     }
 
     #[tokio::test]
@@ -760,5 +773,197 @@ mod tests {
         comic["comicDownloadDir"] = json!(download_dir);
         comic["isDownloaded"] = json!(download_dir.is_some());
         comic
+    }
+
+    /// 1x1 lossless webp, a page the PDF export can read
+    const PAGE: [u8; 34] = [
+        0x52, 0x49, 0x46, 0x46, 0x1a, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38,
+        0x4c, 0x0d, 0x00, 0x00, 0x00, 0x2f, 0x00, 0x00, 0x00, 0x10, 0x07, 0x10, 0x11, 0x11, 0x88,
+        0x88, 0xfe, 0x07, 0x00,
+    ];
+
+    /// A comic in the library, put in the comic cache the way a search would
+    fn library_comic(id: i32, dir_name: &str, files: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let (state, web_dir) = test_state();
+        let dir = web_dir.parent().unwrap().join("library").join(dir_name);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, content) in files {
+            std::fs::write(dir.join(name), content).unwrap();
+        }
+        state.comics.insert(&hitomi_core::types::Comic {
+            id,
+            title: dir_name.to_string(),
+            comic_download_dir: Some(dir.clone()),
+            is_downloaded: Some(true),
+            ..Default::default()
+        });
+        dir
+    }
+
+    async fn download(id: i32, format: &str) -> TestResponse {
+        let (auth, cookie) = shared_auth();
+        send(
+            auth,
+            "GET",
+            &format!("/api/comics/{id}/download/{format}"),
+            None,
+            &[("cookie", cookie)],
+        )
+        .await
+    }
+
+    /// The PDF tests look at the shared temporary directory, so they run one after the other
+    static PDF_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn temp_pdfs() -> Vec<std::path::PathBuf> {
+        let (state, _) = test_state();
+        std::fs::read_dir(files::temp_dir(state))
+            .map(|entries| entries.filter_map(Result::ok).map(|e| e.path()).collect())
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn the_cbz_of_a_comic_is_served_as_the_archive_with_its_real_name() {
+        let name = "La habitación 日本 - 9101";
+        let archive = b"PK\x03\x04 an archive, as far as the download is concerned";
+        library_comic(9101, name, &[(&format!("{name}.cbz"), archive.as_slice())]);
+
+        let response = download(9101, "cbz").await;
+        assert_eq!(response.status, StatusCode::OK);
+        assert_eq!(response.body, archive);
+        assert_eq!(
+            response.headers["content-type"],
+            "application/vnd.comicbook+zip"
+        );
+        assert_eq!(
+            response.headers["content-length"],
+            archive.len().to_string().as_str()
+        );
+        let disposition = response.headers["content-disposition"].to_str().unwrap();
+        assert!(
+            disposition.starts_with("attachment; filename=\"La habitaci_n __ - 9101.cbz\""),
+            "{disposition}"
+        );
+        assert!(
+            disposition.ends_with(
+                "filename*=UTF-8''La%20habitaci%C3%B3n%20%E6%97%A5%E6%9C%AC%20-%209101.cbz"
+            ),
+            "{disposition}"
+        );
+        assert_eq!(response.headers["cache-control"], "private, no-store");
+    }
+
+    #[tokio::test]
+    async fn the_pdf_of_a_comic_is_built_streamed_and_leaves_nothing_behind() {
+        let _serial = PDF_TESTS.lock().await;
+        let name = "Pdf Comic - 9102";
+        library_comic(9102, name, &[("0001.webp", &PAGE), ("0002.webp", &PAGE)]);
+
+        let response = download(9102, "pdf").await;
+        assert_eq!(
+            response.status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&response.body)
+        );
+        assert!(
+            response.body.starts_with(b"%PDF-"),
+            "{:?}",
+            &response.body[..8.min(response.body.len())]
+        );
+        assert_eq!(response.headers["content-type"], "application/pdf");
+        assert_eq!(
+            response.headers["content-length"],
+            response.body.len().to_string().as_str()
+        );
+        assert!(response.headers["content-disposition"]
+            .to_str()
+            .unwrap()
+            .contains("Pdf%20Comic%20-%209102.pdf"));
+        // the body is gone, so is the temporary file it came from
+        assert_eq!(temp_pdfs(), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[tokio::test]
+    async fn an_aborted_pdf_download_deletes_its_temporary_file_too() {
+        let _serial = PDF_TESTS.lock().await;
+        let name = "Aborted Pdf - 9103";
+        library_comic(9103, name, &[("0001.webp", &PAGE)]);
+
+        let (auth, cookie) = shared_auth();
+        let (state, web_dir) = test_state();
+        let request = Request::builder()
+            .uri("/api/comics/9103/download/pdf")
+            .header("cookie", cookie)
+            .body(Body::empty())
+            .unwrap();
+        let app = app(state.clone(), auth.clone(), web_dir).layer(
+            axum::extract::connect_info::MockConnectInfo(SocketAddr::from((PEER, 40000))),
+        );
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            temp_pdfs().len(),
+            1,
+            "the file exists while the browser has not read it"
+        );
+        // the browser gives up without reading a byte
+        drop(response);
+        assert_eq!(temp_pdfs(), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[tokio::test]
+    async fn a_failed_pdf_leaves_no_temporary_file() {
+        let _serial = PDF_TESTS.lock().await;
+        // a page that is no image, which makes the PDF fail halfway
+        library_comic(9104, "Broken Pdf - 9104", &[("0001.webp", b"not an image")]);
+        let response = download(9104, "pdf").await;
+        assert_eq!(response.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            json_of(&response.body)["err_title"],
+            json!("Failed to create the PDF")
+        );
+        assert_eq!(temp_pdfs(), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[tokio::test]
+    async fn a_download_without_archive_or_outside_the_library_is_refused_clearly() {
+        // downloaded by an old version as loose pages, there is no cbz to serve
+        library_comic(9105, "Loose Pages - 9105", &[("0001.webp", &PAGE)]);
+        let response = download(9105, "cbz").await;
+        assert_eq!(response.status, StatusCode::NOT_FOUND);
+        assert!(String::from_utf8_lossy(&response.body).contains("has no cbz archive"));
+
+        // a comic that is not downloaded
+        let (state, _) = test_state();
+        state.comics.insert(&hitomi_core::types::Comic {
+            id: 9106,
+            ..Default::default()
+        });
+        let response = download(9106, "cbz").await;
+        assert_eq!(response.status, StatusCode::NOT_FOUND);
+        assert!(String::from_utf8_lossy(&response.body).contains("is not downloaded"));
+
+        // a directory outside the library, which no client can plant in the cache, is not served
+        let outside = state.context.data_dir().join("outside - 9107");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("outside - 9107.cbz"), b"secret").unwrap();
+        state.comics.insert(&hitomi_core::types::Comic {
+            id: 9107,
+            comic_download_dir: Some(outside),
+            is_downloaded: Some(true),
+            ..Default::default()
+        });
+        let response = download(9107, "cbz").await;
+        assert_eq!(response.status, StatusCode::NOT_FOUND);
+        assert!(!String::from_utf8_lossy(&response.body).contains("secret"));
+
+        assert_eq!(download(9101, "zip").await.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn downloads_need_a_login() {
+        let response = anonymous("GET", "/api/comics/9101/download/cbz", None).await;
+        assert_eq!(response.status, StatusCode::UNAUTHORIZED);
     }
 }

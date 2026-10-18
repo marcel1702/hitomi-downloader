@@ -14,7 +14,6 @@ use hitomi_core::api;
 
 use crate::{
     error::{ApiError, ApiResult},
-    paths,
     state::AppState,
 };
 
@@ -30,7 +29,7 @@ const CACHE_CONTROL: HeaderValue = HeaderValue::from_static("private, max-age=86
 
 async fn cover(State(state): State<AppState>, Path(id): Path<i32>) -> ApiResult<Response> {
     let comic = state.comics.get(&state.context, id).await?;
-    let download_dir = library_dir_of(&state, &comic);
+    let download_dir = download_dir_of(&state, &comic);
     let data = api::get_cover_data(&state.context, comic.cover_url.clone(), download_dir).await?;
     Ok(image_response(data))
 }
@@ -50,7 +49,7 @@ async fn page(
             ),
         ));
     };
-    let download_dir = library_dir_of(&state, &comic);
+    let download_dir = download_dir_of(&state, &comic);
     let data = api::get_image_data(
         &state.context,
         id,
@@ -63,15 +62,12 @@ async fn page(
     Ok(image_response(data))
 }
 
-/// The download directory of `comic`, if it lies inside the library
+/// The download directory of `comic` for the core, which takes it as text
 ///
-/// Every comic in the cache came from the server, this only makes sure an image is never
-/// read from anywhere else. One that is not in the library comes from Hitomi.
-fn library_dir_of(state: &AppState, comic: &hitomi_core::types::Comic) -> Option<String> {
-    let library = state.context.config().read().download_dir.clone();
-    let dir = comic.comic_download_dir.as_ref()?;
-    paths::rebased_within(dir, &library)
-        .ok()
+/// An image of a comic that is not in the library comes from Hitomi.
+fn download_dir_of(state: &AppState, comic: &hitomi_core::types::Comic) -> Option<String> {
+    state
+        .library_dir_of(comic)
         .map(|dir| dir.to_string_lossy().into_owned())
 }
 
