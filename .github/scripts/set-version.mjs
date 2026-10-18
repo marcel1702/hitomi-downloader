@@ -67,7 +67,7 @@ export function setVersion(root, tag) {
   after.cargoToml = head + replaceOnce(body, /^version = "[^"]*"/m, `version = "${version}"`, 'version in [workspace.package]') + tail
 
   after.cargoLock = WORKSPACE_CRATES.reduce(
-    (lock, crate) => replaceOnce(lock, new RegExp(`(\\[\\[package\\]\\]\\nname = "${crate}"\\nversion = )"[^"]*"`), `$1"${version}"`, `Cargo.lock entry of ${crate}`),
+    (lock, crate) => replaceOnce(lock, new RegExp(`(\\[\\[package\\]\\]\\r?\\nname = "${crate}"\\r?\\nversion = )"[^"]*"`), `$1"${version}"`, `Cargo.lock entry of ${crate}`),
     before.cargoLock,
   )
   // the top level key, which is the only one indented by two spaces
