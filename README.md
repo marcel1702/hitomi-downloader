@@ -92,7 +92,7 @@ All of them are environment variables. The login has no default: **the server do
 | `HITOMI_USERNAME`, `HITOMI_PASSWORD_HASH` | The login. `HITOMI_PASSWORD` (plain) works too, less safe |
 | `HITOMI_LIBRARY_DIR` | Where the downloads go, a directory that is mounted into the container. Default `/data/library`, any path will do |
 | `HITOMI_EXPORT_DIR` | Where "Export to server" writes, default `/data/export`. Not inside the library |
-| `HITOMI_CONFIG_DIR` | `config.json`, the logins, the logs and the pages of running downloads, default `/config` |
+| `HITOMI_CONFIG_DIR` | `config.json`, the logins, the logs, the download queue (`queue.json`) and the pages of running downloads, default `/config` |
 | `PUID`, `PGID`, `UMASK` | The user and group the files belong to (default `1000:1000`), and their rights (default `022`) |
 | `TZ` | Time zone of the logs |
 | `HITOMI_PORT` | The port in the container, default `8080` |
@@ -134,6 +134,11 @@ without https: put a reverse proxy in front of it, set `HITOMI_PUBLIC_URL` to th
 In the browser a comic is saved on the device you sit at with **Download PDF** and **Download CBZ**, under its
 real name. **Export All** and the entries "to server" of the context menu write into the export directory of
 the server instead.
+
+The download queue survives a restart or an update of the container. What waits, runs or is paused comes
+back at the next start, and a download continues with the pages that are missing. A failed download stays in
+the list for a retry. The queue is the file `queue.json` in the config directory: if it can not be read, it is
+moved to `queue.json.corrupt` and the queue starts empty.
 
 ### Versions and updates
 

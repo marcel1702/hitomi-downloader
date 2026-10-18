@@ -18,7 +18,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::{
-    sync::{watch, Semaphore, SemaphorePermit},
+    sync::{watch, Notify, Semaphore, SemaphorePermit},
     task::JoinSet,
 };
 
@@ -29,6 +29,7 @@ use crate::{
     hitomi::{image_url_from_image, invalidate_gg, Ext, GalleryFiles},
     hitomi_client::{HitomiClient, UnexpectedStatus},
     pages,
+    queue::{self, StoredTask},
     types::{Comic, ComicInfo, DownloadFormat},
     utils::filename_filter,
 };
@@ -53,7 +54,15 @@ pub struct DownloadManager {
     byte_per_sec: Arc<AtomicU64>,
     /// In the order the tasks were created, which is the order the frontend lists them in
     download_tasks: Arc<RwLock<IndexMap<i32, DownloadTask>>>,
+    /// Where the queue is kept between runs, see [`crate::context::Options`]
+    queue_file: Option<PathBuf>,
+    /// Told whenever a task is added or changes its state, which is what the file holds
+    queue_changed: Arc<Notify>,
 }
+
+/// How long the queue waits for more changes before it is written, so that many tasks that
+/// change at once, a batch download above all, are one write
+const QUEUE_WRITE_DELAY: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum DownloadTaskState {
@@ -79,15 +88,34 @@ impl DownloadManager {
             img_limit: Arc::new(AtomicU32::new(img_concurrency)),
             byte_per_sec: Arc::new(AtomicU64::new(0)),
             download_tasks: Arc::new(RwLock::new(IndexMap::new())),
+            queue_file: context.queue_file().map(Path::to_path_buf),
+            queue_changed: Arc::new(Notify::new()),
         };
 
         context.spawn(manager.clone().emit_download_speed_loop());
+        if manager.queue_file.is_some() {
+            context.spawn(manager.clone().persist_queue_loop());
+        }
 
         manager
     }
 
     pub fn create_download_task(&self, comic: Comic) -> anyhow::Result<()> {
-        use DownloadTaskState::{Downloading, Paused, Pending};
+        let download_format = self.context.config().read().download_format;
+        self.create_task(comic, download_format, DownloadTaskState::Pending)
+    }
+
+    /// Create the task of `comic` in `state`, which is `Pending` for a new download
+    ///
+    /// A task that is restored as `Paused` waits for a resume, one restored as `Failed` is
+    /// only listed and waits for a retry.
+    fn create_task(
+        &self,
+        comic: Comic,
+        download_format: DownloadFormat,
+        state: DownloadTaskState,
+    ) -> anyhow::Result<()> {
+        use DownloadTaskState::{Downloading, Failed, Paused, Pending};
         let id = comic.id;
         let mut tasks = self.download_tasks.write();
         if let Some(task) = tasks.get(&id) {
@@ -97,11 +125,118 @@ impl DownloadManager {
                 return Ok(());
             }
         }
-        let task = DownloadTask::new(self.context.clone(), comic)
+        let task = DownloadTask::new(self.context.clone(), comic, download_format, state)
             .context(format!("Failed to create download task with id `{id}`",))?;
-        self.context.spawn(task.clone().process());
+        if state == Failed {
+            // nothing runs, the task is a line in the list that can be retried
+            task.emit_download_task_create_event();
+        } else {
+            self.context.spawn(task.clone().process());
+        }
         tasks.insert(id, task);
+        drop(tasks);
+        self.mark_queue_changed();
         Ok(())
+    }
+
+    /// Take the downloads of the last run back from the queue file
+    ///
+    /// Called once the process is set up, not by [`Context::init_with`]: a restored download
+    /// works out its directory from the settings, which a server pins to its volumes after
+    /// the context exists, and it writes to the log, which starts after that.
+    ///
+    /// Those that waited or ran start again, and fetch only the pages that are missing: the
+    /// ones that were downloaded lie in the temporary directory still. Paused and failed ones
+    /// come back as they were.
+    pub fn restore_queue(&self) {
+        let Some(path) = &self.queue_file else {
+            return;
+        };
+        self.restore(queue::load(path));
+    }
+
+    fn restore(&self, stored: Vec<StoredTask>) {
+        let total = stored.len();
+        let mut restored = 0;
+        for StoredTask {
+            state,
+            download_format,
+            comic,
+        } in stored
+        {
+            let id = comic.id;
+            let Some(state) = restored_state(state) else {
+                continue;
+            };
+            match self.create_task(comic, download_format, state) {
+                Ok(()) => restored += 1,
+                Err(err) => {
+                    let err_title = format!("Failed to restore the download of `{id}`, dropped");
+                    let string_chain = err.to_string_chain();
+                    tracing::error!(err_title, message = string_chain);
+                }
+            }
+        }
+        if total > 0 {
+            tracing::info!(restored, total, "Restored the download queue");
+        }
+    }
+
+    /// The downloads the queue file holds, in the order they were created
+    fn queue_snapshot(&self) -> Vec<StoredTask> {
+        self.download_tasks
+            .read()
+            .values()
+            .filter_map(|task| {
+                let state = *task.state_sender.borrow();
+                if !queue::is_stored(state) {
+                    return None;
+                }
+                // both are worked out again from the settings of the next run
+                let mut comic = task.comic.as_ref().clone();
+                comic.comic_download_dir = None;
+                comic.is_downloaded = None;
+                Some(StoredTask {
+                    state,
+                    download_format: task.download_format,
+                    comic,
+                })
+            })
+            .collect()
+    }
+
+    fn mark_queue_changed(&self) {
+        if self.queue_file.is_some() {
+            self.queue_changed.notify_one();
+        }
+    }
+
+    /// Write the queue file now, which a process that is about to end does
+    ///
+    /// Also what the end of a download does, so that a comic that is in the library is not in
+    /// the file any more when the process ends a moment later.
+    pub fn save_queue_now(&self) {
+        let Some(path) = &self.queue_file else {
+            return;
+        };
+        if let Err(err) = queue::save(path, &self.queue_snapshot()) {
+            let err_title = "Failed to save the download queue";
+            let string_chain = err.to_string_chain();
+            tracing::error!(err_title, message = string_chain);
+        }
+    }
+
+    async fn persist_queue_loop(self) {
+        loop {
+            self.queue_changed.notified().await;
+            // what changes while it waits is written with it
+            tokio::time::sleep(QUEUE_WRITE_DELAY).await;
+            let manager = self.clone();
+            // the file can be megabytes, which must not block the async runtime
+            if let Err(err) = tokio::task::spawn_blocking(move || manager.save_queue_now()).await {
+                tracing::error!("Failed to save the download queue: {err}");
+            }
+        }
     }
 
     pub fn pause_download_task(&self, id: i32) -> anyhow::Result<()> {
@@ -213,6 +348,17 @@ impl DownloadManager {
 /// so shrinking returns a future that waits for enough of them to be released and then
 /// retires them for good. Until then a semaphore that is fair, as tokio's is, already lets
 /// no new download start ahead of that future.
+/// The state a stored download comes back in, none for one that should not be stored
+///
+/// One that was running waits for its turn like the others.
+fn restored_state(stored: DownloadTaskState) -> Option<DownloadTaskState> {
+    match stored {
+        DownloadTaskState::Downloading => Some(DownloadTaskState::Pending),
+        state if queue::is_stored(state) => Some(state),
+        _ => None,
+    }
+}
+
 fn resize_semaphore(
     sem: &Arc<Semaphore>,
     limit: &AtomicU32,
@@ -246,7 +392,12 @@ struct DownloadTask {
 }
 
 impl DownloadTask {
-    pub fn new(context: Context, mut comic: Comic) -> anyhow::Result<Self> {
+    pub fn new(
+        context: Context,
+        mut comic: Comic,
+        download_format: DownloadFormat,
+        state: DownloadTaskState,
+    ) -> anyhow::Result<Self> {
         comic
             .update_dir_name_fields_by_fmt(&context)
             .context(format!(
@@ -255,8 +406,13 @@ impl DownloadTask {
             ))?;
 
         let download_manager = context.download_manager().clone();
-        let (state_sender, _) = watch::channel(DownloadTaskState::Pending);
-        let download_format = context.config().read().download_format;
+        let (state_sender, _) = watch::channel(state);
+        // a task that waits for a resume or a retry shows the size of its comic already
+        let total_img_count = if state == DownloadTaskState::Pending {
+            0
+        } else {
+            u32::try_from(comic.files.len()).unwrap_or(u32::MAX)
+        };
 
         let task = Self {
             context,
@@ -264,7 +420,7 @@ impl DownloadTask {
             comic: Arc::new(comic),
             state_sender,
             downloaded_img_count: Arc::new(AtomicU32::new(0)),
-            total_img_count: Arc::new(AtomicU32::new(0)),
+            total_img_count: Arc::new(AtomicU32::new(total_img_count)),
             download_format,
         };
 
@@ -416,6 +572,11 @@ impl DownloadTask {
 
         self.set_state(DownloadTaskState::Completed);
         self.emit_download_task_update_event();
+        // not after the delay of the writer: a restart in between would download it again
+        let manager = self.download_manager.clone();
+        if let Err(err) = tokio::task::spawn_blocking(move || manager.save_queue_now()).await {
+            tracing::error!("Failed to save the download queue: {err}");
+        }
     }
 
     fn create_temp_download_dir(&self) -> Option<PathBuf> {
@@ -542,6 +703,7 @@ impl DownloadTask {
             tracing::error!(err_title, message = string_chain);
             return ControlFlow::Break(());
         }
+        self.download_manager.mark_queue_changed();
         ControlFlow::Continue(())
     }
 
@@ -572,12 +734,10 @@ impl DownloadTask {
     }
 
     fn set_state(&self, state: DownloadTaskState) {
-        let comic_title = &self.comic.title;
-        if let Err(err) = self.state_sender.send(state).map_err(anyhow::Error::from) {
-            let err_title = format!("Failed to send state `{state:?}` to `{comic_title}`");
-            let string_chain = err.to_string_chain();
-            tracing::error!(err_title, message = string_chain);
-        }
+        // `send` leaves the state as it is while nobody listens, which is the case until the
+        // task has started: a pause or a cancel right after the task was created would be lost
+        self.state_sender.send_replace(state);
+        self.download_manager.mark_queue_changed();
     }
 
     fn emit_download_task_update_event(&self) {
@@ -1387,6 +1547,7 @@ mod tests {
                 NoEvents,
                 crate::context::Options {
                     temp_dir: Some(root.join("config").join("downloading")),
+                    queue_file: Some(root.join("config").join("queue.json")),
                 },
             )
             .unwrap();
@@ -1430,6 +1591,152 @@ mod tests {
     fn a_comic_without_artists_goes_into_the_library_itself() {
         // the empty folder name is left out, there is no `[]` or empty level
         assert_eq!(default_dir_of(&[]), PathBuf::from("A Title (7) - english"));
+    }
+
+    fn stored(id: i32, state: DownloadTaskState, format: DownloadFormat) -> StoredTask {
+        StoredTask {
+            state,
+            download_format: format,
+            comic: Comic {
+                id,
+                title: format!("Queued {id}"),
+                files: vec![gallery_file(0); 3],
+                ..Comic::default()
+            },
+        }
+    }
+
+    fn state_of(manager: &DownloadManager, id: i32) -> Option<DownloadTaskState> {
+        manager
+            .download_tasks
+            .read()
+            .get(&id)
+            .map(|task| *task.state_sender.borrow())
+    }
+
+    #[test]
+    fn a_stored_download_comes_back_as_it_was_but_a_running_one_waits() {
+        use DownloadTaskState::{Cancelled, Completed, Downloading, Failed, Paused, Pending};
+        assert_eq!(restored_state(Pending), Some(Pending));
+        assert_eq!(restored_state(Downloading), Some(Pending));
+        assert_eq!(restored_state(Paused), Some(Paused));
+        assert_eq!(restored_state(Failed), Some(Failed));
+        assert_eq!(restored_state(Completed), None);
+        assert_eq!(restored_state(Cancelled), None);
+    }
+
+    #[test]
+    fn paused_and_failed_downloads_are_restored_listed_and_queued_again() {
+        let (context, _) = test_context();
+        let manager = context.download_manager();
+        manager.restore(vec![
+            stored(710_003, DownloadTaskState::Paused, DownloadFormat::Avif),
+            stored(710_001, DownloadTaskState::Failed, DownloadFormat::Webp),
+            // an end state is not restored, whatever put it in the file
+            stored(710_002, DownloadTaskState::Completed, DownloadFormat::Webp),
+        ]);
+
+        assert_eq!(state_of(manager, 710_003), Some(DownloadTaskState::Paused));
+        assert_eq!(state_of(manager, 710_001), Some(DownloadTaskState::Failed));
+        assert_eq!(state_of(manager, 710_002), None);
+
+        // they are listed for a frontend that connects now, with the size of their comic
+        let listed: Vec<_> = manager
+            .task_snapshots()
+            .into_iter()
+            .filter_map(|event| match event {
+                DownloadTaskEvent::Create {
+                    comic,
+                    state,
+                    total_img_count,
+                    ..
+                } if (710_000..711_000).contains(&comic.id) => {
+                    Some((comic.id, state, total_img_count))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (710_003, DownloadTaskState::Paused, 3),
+                (710_001, DownloadTaskState::Failed, 3)
+            ],
+            "in the order they were stored"
+        );
+
+        // the format they were queued with is kept, not the one of the settings now
+        let formats: Vec<_> = manager
+            .queue_snapshot()
+            .into_iter()
+            .filter(|task| (710_000..711_000).contains(&task.comic.id))
+            .map(|task| (task.comic.id, task.state, task.download_format))
+            .collect();
+        assert_eq!(
+            formats,
+            [
+                (710_003, DownloadTaskState::Paused, DownloadFormat::Avif),
+                (710_001, DownloadTaskState::Failed, DownloadFormat::Webp)
+            ]
+        );
+        // the directory is worked out again at the next start, it is not stored
+        assert!(manager
+            .queue_snapshot()
+            .iter()
+            .all(|task| task.comic.comic_download_dir.is_none()));
+    }
+
+    #[test]
+    fn a_cancelled_download_leaves_the_queue() {
+        let (context, _) = test_context();
+        let manager = context.download_manager();
+        manager.restore(vec![stored(
+            720_001,
+            DownloadTaskState::Paused,
+            DownloadFormat::Webp,
+        )]);
+        let in_queue = |id| {
+            manager
+                .queue_snapshot()
+                .iter()
+                .any(|task| task.comic.id == id)
+        };
+        assert!(in_queue(720_001));
+        manager.cancel_download_task(720_001).unwrap();
+        assert!(!in_queue(720_001));
+    }
+
+    #[test]
+    fn the_queue_file_follows_the_queue() {
+        let (context, root) = test_context();
+        let manager = context.download_manager();
+        let file = root.join("config").join("queue.json");
+        let ids_in_file = || -> Vec<i32> {
+            queue::load(&file)
+                .into_iter()
+                .map(|task| task.comic.id)
+                .filter(|id| (730_000..731_000).contains(id))
+                .collect()
+        };
+        let wait_for = |expected: Vec<i32>| {
+            // written a moment after the change, many changes are one write
+            for _ in 0..60 {
+                if ids_in_file() == expected {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            false
+        };
+
+        manager.restore(vec![
+            stored(730_001, DownloadTaskState::Paused, DownloadFormat::Webp),
+            stored(730_002, DownloadTaskState::Failed, DownloadFormat::Webp),
+        ]);
+        assert!(wait_for(vec![730_001, 730_002]), "{:?}", ids_in_file());
+
+        manager.cancel_download_task(730_001).unwrap();
+        assert!(wait_for(vec![730_002]), "{:?}", ids_in_file());
     }
 
     /// A task for the comic `id` whose archive goes to `library/<name>`
