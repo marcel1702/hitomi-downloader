@@ -1,0 +1,204 @@
+name: Docker
+
+# The image of the web version. A pull request that touches what goes into it builds it and
+# starts it. A tag builds it for amd64 and arm64, publishes it to the GitHub Container Registry
+# and starts what was published.
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .hadolint.yaml
+      - docker/**
+      - docker-compose.yml
+      - .env.example
+      - crates/**
+      - src/**
+      - src-tauri/Cargo.toml
+      - src-tauri/tauri.conf.json
+      - src-tauri/icons/128x128.png
+      - Cargo.toml
+      - Cargo.lock
+      - package.json
+      - pnpm-lock.yaml
+      - index.html
+      - vite.config.ts
+      - uno.config.ts
+      - tsconfig*.json
+      - .github/scripts/**
+      - .github/workflows/docker.yml
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (Dockerfile, scripts, compose file)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: Dockerfile
+
+      - name: Shell scripts
+        run: shellcheck docker/*.sh
+
+      - name: What the entrypoint decides, with stand-ins for the commands it runs
+        run: docker/entrypoint-test.sh
+
+      # The hash of a password contains `$`, which Compose reads as the start of a variable
+      # unless the value is in single quotes in the .env file. The example has to be written so
+      # that the value arrives as it was written. `config` prints every `$` doubled, so that
+      # what it prints can be read again. That the value reaches a container as written is shown
+      # by the image job, which starts the compose file for real.
+      - name: The compose file, with the example .env
+        run: |
+          set -eu
+          hash='$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aGFzaGhhc2hoYXNoaGFzaA'
+          {
+            grep -vE '^(HITOMI_PASSWORD_HASH|LIBRARY_PATH)=' .env.example
+            printf "HITOMI_PASSWORD_HASH='%s'\n" "$hash"
+            echo "LIBRARY_PATH=$RUNNER_TEMP"
+          } > .env
+          docker compose config --quiet
+          docker compose --profile kavita config --quiet
+          got=$(docker compose config --format json | jq -r '.services["hitomi-downloader"].environment.HITOMI_PASSWORD_HASH')
+          got=${got//\$\$/\$}
+          test "$got" = "$hash" || { echo "the hash arrived as '$got'" >&2; exit 1; }
+          # without a login or a library the compose file refuses, saying what is missing
+          if env -u HITOMI_USERNAME docker compose --env-file /dev/null config > /dev/null 2> "$RUNNER_TEMP/compose-error"; then
+            echo "the compose file accepted a missing login" >&2; exit 1
+          fi
+          grep -q 'HITOMI_USERNAME' "$RUNNER_TEMP/compose-error"
+
+  image:
+    name: Image (build and start, amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: hitomi-downloader:ci
+          cache-from: type=gha,scope=image-amd64
+          cache-to: type=gha,scope=image-amd64,mode=max
+
+      - name: Start the image and check what it promises
+        env:
+          IMAGE: hitomi-downloader:ci
+          REQUIRE_PUID_TESTS: '1'
+          REQUIRE_HEALTH_STATUS: '1'
+        run: docker/smoke-test.sh
+
+      # The compose file as it is shipped, with an .env written like the example: the hash has
+      # to arrive with its `$`, the long form of the bind mount has to work, and the login
+      # has to accept the password the hash was made from.
+      - name: The compose file runs the image
+        run: |
+          set -eu
+          library="$RUNNER_TEMP/library"
+          mkdir -p "$library"
+          chmod 0777 "$library"
+          hash=$(printf 'compose test password\n' | docker run --rm -i hitomi-downloader:ci hash-password)
+          {
+            echo "HITOMI_USERNAME=admin"
+            printf "HITOMI_PASSWORD_HASH='%s'\n" "$hash"
+            echo "LIBRARY_PATH=$library"
+            echo "HITOMI_PORT=18080"
+          } > .env
+          cat > compose.ci.yml << 'EOF'
+          services:
+            hitomi-downloader:
+              image: hitomi-downloader:ci
+              pull_policy: never
+          EOF
+          docker compose -f docker-compose.yml -f compose.ci.yml up -d hitomi-downloader
+          status=starting
+          for _ in $(seq 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' hitomi-downloader)
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          test "$status" = healthy || { docker compose logs hitomi-downloader; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+            http://127.0.0.1:18080/auth/login -d '{"username":"admin","password":"compose test password"}')
+          test "$code" = 200 || { echo "the login answered $code" >&2; docker compose logs hitomi-downloader; exit 1; }
+          docker compose -f docker-compose.yml -f compose.ci.yml down -v
+
+  publish:
+    name: Publish (amd64 and arm64)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Only the last stage of the image runs under emulation, to install its few packages. The
+      # server itself is compiled for arm64 on the amd64 machine.
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 1.2.3 and 1.2 and 1 and latest for a release, only 1.2.3-rc.1 for a pre-release
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          labels: |
+            org.opencontainers.image.title=hitomi-downloader
+            org.opencontainers.image.description=The web version of hitomi-downloader
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # The version of the image is the version of the tag, see .github/scripts/set-version.mjs
+          build-args: VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=image-multi
+          cache-to: type=gha,scope=image-multi,mode=max
+
+      # What was published has to start, on both platforms. arm64 runs under emulation here.
+      - name: Start what was published
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          for platform in linux/amd64 linux/arm64; do
+            echo "::group::$platform"
+            docker pull --platform "$platform" "ghcr.io/${GITHUB_REPOSITORY}:${VERSION}"
+            IMAGE="ghcr.io/${GITHUB_REPOSITORY}:${VERSION}" PLATFORM="$platform" EXPECT_VERSION="${TAG#v}" \
+              REQUIRE_PUID_TESTS=1 REQUIRE_HEALTH_STATUS=1 docker/smoke-test.sh
+            echo "::endgroup::"
+          done

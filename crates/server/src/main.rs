@@ -18,6 +18,7 @@ mod images;
 mod paths;
 mod settings;
 mod state;
+mod volumes;
 
 use std::{io::IsTerminal, net::SocketAddr, path::Path, process::ExitCode, sync::Arc};
 
@@ -50,8 +51,9 @@ async fn main() -> ExitCode {
     let result = match std::env::args().nth(1).as_deref() {
         None => run().await,
         Some("hash-password") => hash_password(),
+        Some("healthcheck") => healthcheck(),
         Some(other) => Err(anyhow::anyhow!(
-            "unknown argument `{other}`, the only command is `hitomi-server hash-password`"
+            "unknown argument `{other}`, the commands are `hitomi-server hash-password` and `hitomi-server healthcheck`"
         )),
     };
     match result {
@@ -87,7 +89,9 @@ async fn run() -> anyhow::Result<()> {
     );
     pin_dirs(&context, &pinned_dirs)?;
     state::check_temp_dir(&settings.temp_dir, &pinned_dirs.download_dir)?;
+    check_volumes(&settings, &pinned_dirs)?;
     logger::init(&context, &[env!("CARGO_CRATE_NAME")])?;
+    limit_file_names(&settings, &pinned_dirs)?;
     let auth = Auth::new(&settings.auth, &settings.config_dir, Policy::default())?;
 
     let (shutdown_sender, shutdown) = watch::channel(false);
@@ -140,6 +144,94 @@ async fn run() -> anyhow::Result<()> {
     // writes out what the file logger still buffers
     logger::disable_file_logger()?;
     Ok(())
+}
+
+/// Check every directory the server writes to, so a problem shows at the start
+fn check_volumes(settings: &Settings, pinned_dirs: &PinnedDirs) -> anyhow::Result<()> {
+    let dirs = [
+        (&pinned_dirs.download_dir, "library", "HITOMI_LIBRARY_DIR"),
+        (
+            &pinned_dirs.export_dir,
+            "export directory",
+            "HITOMI_EXPORT_DIR",
+        ),
+        (
+            &settings.config_dir,
+            "config directory",
+            "HITOMI_CONFIG_DIR",
+        ),
+        (
+            &settings.temp_dir,
+            "directory for the pages of running downloads",
+            "HITOMI_TEMP_DIR",
+        ),
+    ];
+    for (dir, what, variable) in dirs {
+        volumes::check_writable(dir, what, variable)?;
+    }
+    if settings.require_mount {
+        // the pages directory is in the config volume unless it was placed elsewhere on purpose
+        for (dir, what, variable) in &dirs[..3] {
+            volumes::check_mounted(dir, std::path::Path::new("/"), what, variable)?;
+        }
+    }
+    Ok(())
+}
+
+/// Shorten the names of the comics to what the library and the export directory take
+fn limit_file_names(settings: &Settings, pinned_dirs: &PinnedDirs) -> anyhow::Result<()> {
+    let limit = volumes::max_name_bytes(
+        &[
+            (pinned_dirs.download_dir.as_path(), "library"),
+            (pinned_dirs.export_dir.as_path(), "export directory"),
+        ],
+        settings.max_name_bytes,
+    )?;
+    hitomi_core::utils::set_max_file_name_bytes(limit)?;
+    if limit < hitomi_core::utils::DEFAULT_MAX_FILE_NAME_BYTES {
+        tracing::warn!(
+            limit,
+            "File names are limited to {limit} bytes here, long titles are shortened to fit"
+        );
+    }
+    Ok(())
+}
+
+/// Ask the running server whether it is up, for the healthcheck of a container
+///
+/// Exits with success if `GET /api/health` answers 200. Needs no `curl` in the image.
+fn healthcheck() -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+    let port = std::env::var("HITOMI_PORT")
+        .ok()
+        .and_then(|port| port.trim().parse::<u16>().ok())
+        .unwrap_or(8080);
+    // a server that listens on one address only is reached there, else on the loopback
+    let host = std::env::var("HITOMI_HOST")
+        .ok()
+        .and_then(|host| host.trim().parse::<std::net::IpAddr>().ok())
+        .filter(|host| !host.is_unspecified())
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+
+    let timeout = std::time::Duration::from_secs(4);
+    let mut stream = std::net::TcpStream::connect_timeout(&SocketAddr::new(host, port), timeout)
+        .with_context(|| format!("Failed to connect to {host}:{port}"))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    write!(
+        stream,
+        "GET /api/health HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )?;
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer)?;
+    if answer.starts_with("HTTP/1.1 200") || answer.starts_with("HTTP/1.0 200") {
+        Ok(())
+    } else {
+        bail!(
+            "the server answered `{}`",
+            answer.lines().next().unwrap_or("nothing")
+        )
+    }
 }
 
 /// Print the hash of a password for `HITOMI_PASSWORD_HASH`

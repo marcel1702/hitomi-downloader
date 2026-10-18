@@ -5,6 +5,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _};
 
+use hitomi_core::utils::{DEFAULT_MAX_FILE_NAME_BYTES, MIN_MAX_FILE_NAME_BYTES};
+
 use crate::auth::{AuthSettings, PasswordSetting, DEFAULT_SESSION_DAYS};
 
 /// Where the server keeps its files and where it listens, read from the environment
@@ -19,6 +21,12 @@ pub struct Settings {
     /// Where the pages of a running download are kept (`HITOMI_TEMP_DIR`), by default
     /// `downloading` in the config dir. Never the library: a scan of it must not see them.
     pub temp_dir: PathBuf,
+    /// Refuse to start when a data directory is not a mount (`HITOMI_REQUIRE_MOUNT`), which
+    /// is what the Docker image sets, so nothing is written to the container by mistake
+    pub require_mount: bool,
+    /// File names are at most this long (`HITOMI_MAX_NAME_BYTES`), for a share that allows
+    /// less than the server finds out by itself. Can only lower the limit, never raise it.
+    pub max_name_bytes: Option<usize>,
     /// The frontend built by `pnpm build:web` (`HITOMI_WEB_DIR`)
     pub web_dir: PathBuf,
     /// `HITOMI_HOST` and `HITOMI_PORT`
@@ -90,13 +98,32 @@ impl Settings {
                 }
             })
             .transpose()?;
-        let trust_forwarded_for = match var("HITOMI_TRUST_FORWARDED_FOR")
-            .map(|v| v.trim().to_lowercase())
-        {
-            None => false,
-            Some(value) if ["1", "true", "yes", "on"].contains(&value.as_str()) => true,
-            Some(value) if ["0", "false", "no", "off"].contains(&value.as_str()) => false,
-            Some(value) => bail!("HITOMI_TRUST_FORWARDED_FOR `{value}` is neither true nor false"),
+        let flag = |name: &str| -> anyhow::Result<bool> {
+            match var(name).map(|value| value.trim().to_lowercase()) {
+                None => Ok(false),
+                Some(value) if ["1", "true", "yes", "on"].contains(&value.as_str()) => Ok(true),
+                Some(value) if ["0", "false", "no", "off"].contains(&value.as_str()) => Ok(false),
+                Some(value) => bail!("{name} `{value}` is neither true nor false"),
+            }
+        };
+        let trust_forwarded_for = flag("HITOMI_TRUST_FORWARDED_FOR")?;
+        let require_mount = flag("HITOMI_REQUIRE_MOUNT")?;
+        let max_name_bytes = match var("HITOMI_MAX_NAME_BYTES") {
+            Some(bytes) => Some(
+                bytes
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|bytes| {
+                        (MIN_MAX_FILE_NAME_BYTES..=DEFAULT_MAX_FILE_NAME_BYTES).contains(bytes)
+                    })
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "HITOMI_MAX_NAME_BYTES `{bytes}` is no number between {MIN_MAX_FILE_NAME_BYTES} and {DEFAULT_MAX_FILE_NAME_BYTES}"
+                        )
+                    })?,
+            ),
+            None => None,
         };
 
         let config_dir =
@@ -106,6 +133,8 @@ impl Settings {
             config_dir: config_dir.clone(),
             library_dir: var("HITOMI_LIBRARY_DIR").map(PathBuf::from),
             export_dir: var("HITOMI_EXPORT_DIR").map(PathBuf::from),
+            require_mount,
+            max_name_bytes,
             temp_dir: var("HITOMI_TEMP_DIR")
                 .map_or_else(|| config_dir.join("downloading"), PathBuf::from),
             web_dir: var("HITOMI_WEB_DIR").map_or_else(|| PathBuf::from("dist-web"), PathBuf::from),
@@ -179,6 +208,34 @@ mod tests {
 
     fn settings_with(vars: &[(&str, &str)]) -> Settings {
         settings(vars).unwrap()
+    }
+
+    #[test]
+    fn the_checks_of_the_volumes_are_set_by_the_environment() {
+        let defaults = super::Settings::from_vars(|_| None).unwrap();
+        assert!(!defaults.require_mount);
+        assert_eq!(defaults.max_name_bytes, None);
+
+        let set = settings(&[
+            ("HITOMI_REQUIRE_MOUNT", "true"),
+            ("HITOMI_MAX_NAME_BYTES", "143"),
+        ])
+        .unwrap();
+        assert!(set.require_mount);
+        assert_eq!(set.max_name_bytes, Some(143));
+
+        assert!(!settings_with(&[("HITOMI_REQUIRE_MOUNT", "no")]).require_mount);
+        for bad in ["maybe", "2"] {
+            assert!(settings(&[("HITOMI_REQUIRE_MOUNT", bad)]).is_err(), "{bad}");
+        }
+        for bad in ["99", "256", "long", "-1", "143.5"] {
+            assert!(
+                settings(&[("HITOMI_MAX_NAME_BYTES", bad)]).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(settings(&[("HITOMI_MAX_NAME_BYTES", "100")]).is_ok());
+        assert!(settings(&[("HITOMI_MAX_NAME_BYTES", "255")]).is_ok());
     }
 
     #[test]

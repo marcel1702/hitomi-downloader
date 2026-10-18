@@ -66,6 +66,7 @@ impl PinnedDirs {
     /// This looks at the directories in use, not at the environment variables, so it also
     /// holds when none of them is set.
     pub fn check(&self) -> anyhow::Result<()> {
+        let export_existed = self.export_dir.exists();
         for dir in [&self.download_dir, &self.export_dir] {
             std::fs::create_dir_all(dir)
                 .map_err(|err| anyhow::anyhow!("Failed to create `{}`: {err}", dir.display()))?;
@@ -79,6 +80,12 @@ impl PinnedDirs {
             );
         }
         if export.starts_with(&library) {
+            if !export_existed {
+                // do not leave the directories of a refused setup behind in the library
+                for dir in export.ancestors().take_while(|dir| *dir != library) {
+                    let _ = std::fs::remove_dir(dir);
+                }
+            }
             anyhow::bail!(
                 "The export directory `{}` lies inside the library directory `{}`. Exports would show up in Kavita a second time, give them a directory of their own with HITOMI_EXPORT_DIR",
                 export.display(),
@@ -338,6 +345,27 @@ mod tests {
             err.contains("blocker") && err.contains("HITOMI_TEMP_DIR"),
             "{err}"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_refused_export_dir_leaves_nothing_in_the_library() {
+        for export in ["library/export", "library/a/b"] {
+            let (root, pinned) = temp_dirs("library", export);
+            std::fs::create_dir_all(&pinned.download_dir).unwrap();
+            assert!(pinned.check().is_err());
+            assert_eq!(
+                std::fs::read_dir(&pinned.download_dir).unwrap().count(),
+                0,
+                "{export}"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+        // one that was there before is not the business of the check, it is left alone
+        let (root, pinned) = temp_dirs("library", "library/mine");
+        std::fs::create_dir_all(&pinned.export_dir).unwrap();
+        assert!(pinned.check().is_err());
+        assert!(pinned.export_dir.is_dir());
         std::fs::remove_dir_all(root).unwrap();
     }
 
