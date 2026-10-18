@@ -141,6 +141,22 @@ back at the next start, and a download continues with the pages that are missing
 the list for a retry. The queue is the file `queue.json` in the config directory: if it can not be read, it is
 moved to `queue.json.corrupt` and the queue starts empty.
 
+### Following searches
+
+The server can look for new galleries by itself. Search for an artist, a group or a series, for example
+`artist:beater language:english`, and press **Follow this search**. The dialog shows how many galleries match
+and how many of them are in the library already, and asks how to start: **Only new galleries from now on**, or
+**Download everything** (up to 1000 galleries, a search with more only follows from now on). The tab
+**Following** lists what is followed, with the last check, the new galleries it found and its state, and has
+the buttons to check now, pause and delete.
+
+Every `HITOMI_FOLLOW_INTERVAL_HOURS` (6 by default) each followed search is run and the galleries it has not
+dealt with yet are downloaded, the oldest first. A search is one index download, only new galleries cost a
+request each, and the checks run one after the other. Galleries that are in the library, or that are being
+downloaded already, are not downloaded twice. **A comic you delete from the library does not come back**: a
+followed search remembers what it has dealt with. A check that fails shows the error on its card and is tried
+again after half an hour. The followed searches are the file `subscriptions.json` in the config directory.
+
 ### Versions and updates
 
 An image is tagged with its version: `1.2.3`, `1.2`, `1`, and `latest` for the newest release. A pre-release

@@ -5,10 +5,12 @@ import { DropdownOption, SelectOption, useMessage, useNotification, NIcon } from
 import ComicCard from '../components/ComicCard.vue'
 import { useStore } from '../store.ts'
 import { useI18n } from '../utils.ts'
-import { PhMagnifyingGlass, PhArrowRight, PhChecks, PhCloudArrowDown, PhCloud } from '@phosphor-icons/vue'
+import { PhMagnifyingGlass, PhArrowRight, PhChecks, PhCloudArrowDown, PhCloud, PhBellRinging } from '@phosphor-icons/vue'
 import FloatLabelInput from '../components/FloatLabelInput.vue'
 import { SelectionArea } from '@viselect/vue'
 import { useMultiSelect } from '../composables/useMultiSelect.ts'
+import FollowDialog from '../components/FollowDialog.vue'
+import { isWeb } from '../platform.ts'
 
 
 const { t } = useI18n()
@@ -33,6 +35,10 @@ const {
 } = useSuggestion()
 
 const searching = ref<boolean>(false)
+// The query of the results that are shown, which a search that follows them is for, not what
+// was typed since
+const shownQuery = ref<string>('')
+const followDialogShowing = ref<boolean>(false)
 const downloadingAll = ref<boolean>(false)
 
 const sort = ref<SearchSort>('Date')
@@ -70,6 +76,7 @@ async function search(query: string, pageNum: number) {
     return
   }
   store.searchResult = result.data
+  shownQuery.value = query
 
   searching.value = false
 }
@@ -401,10 +408,21 @@ defineExpose({ search })
         </template>
         {{ selectedCount > 0 ? t('search_pane.download_selection') : t('search_pane.download_all') }} ({{ downloadCount }})
       </n-button>
+      <n-button
+        v-if="isWeb"
+        size="small"
+        :disabled="store.searchResult === undefined || shownQuery.trim() === ''"
+        @click="followDialogShowing = true">
+        <template #icon>
+          <n-icon size="18"><PhBellRinging /></n-icon>
+        </template>
+        {{ t('follow_dialog.button') }}
+      </n-button>
       <n-button v-if="selectedCount > 0" class="ml-auto" size="small" quaternary @click="clearSelection">
         {{ t('common.clear_selection') }}
       </n-button>
     </div>
+    <follow-dialog v-if="isWeb" v-model:showing="followDialogShowing" :query="shownQuery" />
 
     <SelectionArea
       v-if="store.searchResult !== undefined"
