@@ -101,8 +101,8 @@ All of them are environment variables. The login has no default: **the server do
 | `TZ` | Time zone of the logs |
 | `HITOMI_HOST`, `HITOMI_PORT` | The address and port the server listens on, default `127.0.0.1:8080`. The image listens on `0.0.0.0:8080`, and `HITOMI_PORT` in the `.env` of the compose file is the port on the Docker host |
 | `HITOMI_WEB_DIR` | The built frontend, default `dist-web`, `/app/web` in the image |
-| `HITOMI_PUBLIC_URL` | The address you reach it under, behind a reverse proxy. `https://` makes the login cookie `Secure` |
-| `HITOMI_TRUST_FORWARDED_FOR` | Behind a reverse proxy: count the failed logins per client and not per proxy |
+| `HITOMI_PUBLIC_URL` | The address you reach it under, behind a reverse proxy. `https://` makes the login cookie `Secure`, see [Login, https and the internet](#login-https-and-the-internet) |
+| `HITOMI_TRUST_FORWARDED_FOR` | Behind a reverse proxy: take the client address from `X-Forwarded-For` and https from `X-Forwarded-Proto`. Only with a proxy that sets both, see below |
 | `HITOMI_SESSION_DAYS` | How long a login lasts, default 30 days |
 | `HITOMI_TEMP_DIR` | Where the pages of running downloads are, default `downloading` in the config directory |
 | `HITOMI_FOLLOW_INTERVAL_HOURS` | How often the followed searches are checked for new galleries, default `6`, from `1` to `720`, `0` for no automatic checks |
@@ -133,7 +133,18 @@ one thing in another container and another here, and be moved to another mount p
 Every page needs a login, there is no way around it. The session lasts 30 days and survives a restart,
 five failed logins within 15 minutes lock the address out for 15 minutes. It still should not face the internet
 without https: put a reverse proxy in front of it, set `HITOMI_PUBLIC_URL` to the address, and
-`HITOMI_TRUST_FORWARDED_FOR=true` so that the lockout counts the client and not the proxy.
+`HITOMI_TRUST_FORWARDED_FOR=true`.
+
+What the two change behind a reverse proxy:
+
+| | Without them | With them |
+|---|---|---|
+| The login cookie | Not `Secure`, the browser also sends it over plain http | `Secure`: always with an `https://` `HITOMI_PUBLIC_URL`, and with `HITOMI_TRUST_FORWARDED_FOR` whenever the proxy sends `X-Forwarded-Proto: https` |
+| The lockout | Counts the address of the proxy: five failed logins of anyone lock **everyone** out for 15 minutes | Counts the address of each client, from the last entry of `X-Forwarded-For` |
+
+Set `HITOMI_TRUST_FORWARDED_FOR` only when every request comes through a proxy that sets these headers, and the
+port of the server can not be reached otherwise: anyone who reaches the server directly could pick an address
+and claim https with them.
 
 ### Downloading and exporting
 

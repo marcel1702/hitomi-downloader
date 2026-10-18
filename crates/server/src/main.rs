@@ -777,12 +777,13 @@ mod tests {
             Router::new().route(
                 "/test/login",
                 get(
-                    |axum::extract::State(auth): axum::extract::State<Auth>| async move {
+                    |axum::extract::State(auth): axum::extract::State<Auth>,
+                     headers: axum::http::HeaderMap| async move {
                         let identity = auth::Identity {
                             user: "tester".to_string(),
                             method: "test".to_string(),
                         };
-                        let cookie = auth.start_session(&identity).unwrap();
+                        let cookie = auth.start_session(&identity, &headers).unwrap();
                         ([(axum::http::header::SET_COOKIE, cookie)], "ok")
                     },
                 ),
@@ -792,6 +793,11 @@ mod tests {
 
     /// A login with the password method and the test method, sessions in a fresh directory
     fn new_auth(policy: Policy) -> Auth {
+        new_auth_behind_proxy(policy, false)
+    }
+
+    /// [`new_auth`] that trusts the `X-Forwarded-*` headers of a reverse proxy, or not
+    fn new_auth_behind_proxy(policy: Policy, trust_forwarded_for: bool) -> Auth {
         let dir = std::env::temp_dir().join(format!("hitomi-auth-test-{}", rand::random::<u64>()));
         std::fs::create_dir_all(&dir).unwrap();
         let methods: Vec<Arc<dyn auth::AuthMethod>> = vec![
@@ -807,7 +813,7 @@ mod tests {
             &dir,
             std::time::Duration::from_secs(3600),
             false,
-            false,
+            trust_forwarded_for,
         )
         .unwrap()
     }
@@ -821,7 +827,9 @@ mod tests {
                 user: USERNAME.to_string(),
                 method: "password".to_string(),
             };
-            let cookie = auth.start_session(&identity).unwrap();
+            let cookie = auth
+                .start_session(&identity, &axum::http::HeaderMap::new())
+                .unwrap();
             (auth, cookie_pair(cookie.to_str().unwrap()))
         })
     }
@@ -1144,6 +1152,98 @@ mod tests {
         )
         .await;
         assert_eq!(spoofed.status, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn parallel_wrong_logins_get_no_more_tries_than_the_limit() {
+        let auth = new_auth(Policy {
+            max_failures: 3,
+            delay: std::time::Duration::from_millis(10),
+            ..Policy::default()
+        });
+        let attempts = (0..12).map(|_| {
+            let auth = auth.clone();
+            let body = json!({ "username": USERNAME, "password": "wrong" });
+            tokio::spawn(async move { send(&auth, "POST", "/auth/login", Some(body), &[]).await })
+        });
+        let mut statuses = Vec::new();
+        for attempt in attempts.collect::<Vec<_>>() {
+            statuses.push(attempt.await.unwrap().status);
+        }
+        let checked = statuses
+            .iter()
+            .filter(|status| **status == StatusCode::UNAUTHORIZED)
+            .count();
+        assert_eq!(checked, 3, "{statuses:?}");
+        assert!(statuses.iter().all(|status| [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::TOO_MANY_REQUESTS
+        ]
+        .contains(status)));
+        // and the right password waits now as well
+        let locked = send(
+            &auth,
+            "POST",
+            "/auth/login",
+            Some(json!({ "username": USERNAME, "password": PASSWORD })),
+            &[],
+        )
+        .await;
+        assert_eq!(locked.status, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn the_cookie_is_secure_when_a_trusted_proxy_was_reached_over_https() {
+        let body = || Some(json!({ "username": USERNAME, "password": PASSWORD }));
+        let https = [("x-forwarded-proto", "https")];
+        let set_cookie = |response: TestResponse| {
+            assert_eq!(response.status, StatusCode::OK);
+            response.headers["set-cookie"].to_str().unwrap().to_string()
+        };
+
+        let trusted = new_auth_behind_proxy(Policy::default(), true);
+        let login = send(&trusted, "POST", "/auth/login", body(), &https).await;
+        let cookie = set_cookie(login);
+        assert!(cookie.contains("; Secure"), "{cookie}");
+        let logout = send(
+            &trusted,
+            "POST",
+            "/auth/logout",
+            None,
+            &[https[0], ("cookie", &cookie_pair(&cookie))],
+        )
+        .await;
+        assert!(set_cookie(logout).contains("; Secure"));
+        let plain = set_cookie(send(&trusted, "POST", "/auth/login", body(), &[]).await);
+        assert!(!plain.contains("Secure"), "{plain}");
+
+        // a proxy that is not trusted can not say so, any client could
+        let untrusted = new_auth(Policy::default());
+        let cookie = set_cookie(send(&untrusted, "POST", "/auth/login", body(), &https).await);
+        assert!(!cookie.contains("Secure"), "{cookie}");
+    }
+
+    #[tokio::test]
+    async fn the_login_page_only_takes_a_target_on_this_server() {
+        // what the address bar holds, a browser drops the tab and the line break of the first two
+        for next in [
+            "/%09/evil.com",
+            "/%0A/evil.com",
+            "/%0D%0A/evil.com",
+            "//evil.com",
+            "/%5Cevil.com",
+            "%2F%2Fevil.com",
+            "https://evil.com/",
+            "javascript:alert(1)",
+        ] {
+            let response = anonymous("GET", &format!("/auth/login?next={next}"), None).await;
+            assert_eq!(response.status, StatusCode::SEE_OTHER, "{next}");
+            assert_eq!(response.headers["location"], "/auth/login", "{next}");
+        }
+        for next in ["/", "/reader%3Fid%3D1", "/settings"] {
+            let response = anonymous("GET", &format!("/auth/login?next={next}"), None).await;
+            assert_eq!(response.status, StatusCode::OK, "{next}");
+        }
     }
 
     #[tokio::test]
