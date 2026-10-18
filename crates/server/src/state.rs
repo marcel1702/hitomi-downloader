@@ -9,29 +9,83 @@ use tokio::sync::{broadcast, watch};
 #[derive(Clone)]
 pub struct AppState {
     pub context: Context,
-    /// Download and export dir set by the environment, which the config can not change
+    /// The library and export dir in use, which no client can change
     pub pinned_dirs: PinnedDirs,
+    /// Limits the PDFs generated at the same time, each of them is built in memory
+    pub pdf_permits: std::sync::Arc<tokio::sync::Semaphore>,
     pub events: broadcast::Sender<Event>,
     pub comics: std::sync::Arc<ComicCache>,
     /// Turns `true` once the server shuts down, which ends the event streams
     pub shutdown: watch::Receiver<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+impl AppState {
+    /// The download directory of `comic`, if it lies inside the library
+    ///
+    /// Every comic in the cache came from the server, this makes sure a file is never read
+    /// from anywhere else. One that is not in the library is not downloaded.
+    pub fn library_dir_of(&self, comic: &Comic) -> Option<PathBuf> {
+        let library = self.context.config().read().download_dir.clone();
+        crate::paths::rebased_within(comic.comic_download_dir.as_ref()?, &library).ok()
+    }
+}
+
+/// The library and export directory of the server
+///
+/// Both are always pinned, whether the environment names them or not: a variable that is not
+/// set leaves the directory the server starts with, which is the one in `config.json`, or
+/// else the default of the core. Either way no client can move them afterwards.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedDirs {
-    pub download_dir: Option<PathBuf>,
-    pub export_dir: Option<PathBuf>,
+    pub download_dir: PathBuf,
+    pub export_dir: PathBuf,
 }
 
 impl PinnedDirs {
+    /// The directories from the environment, and for those it does not name, from `config`
+    pub fn resolve(
+        library_dir: Option<&PathBuf>,
+        export_dir: Option<&PathBuf>,
+        config: &hitomi_core::config::Config,
+    ) -> Self {
+        Self {
+            download_dir: library_dir.unwrap_or(&config.download_dir).clone(),
+            export_dir: export_dir.unwrap_or(&config.export_dir).clone(),
+        }
+    }
+
     /// Put the pinned directories into `config`, whatever it says
     pub fn apply(&self, config: &mut hitomi_core::config::Config) {
-        if let Some(download_dir) = &self.download_dir {
-            config.download_dir.clone_from(download_dir);
+        config.download_dir.clone_from(&self.download_dir);
+        config.export_dir.clone_from(&self.export_dir);
+    }
+
+    /// Create both directories, and refuse a setup in which an export would land in the library
+    ///
+    /// Kavita scans the library, so a comic exported into it would show up a second time.
+    /// This looks at the directories in use, not at the environment variables, so it also
+    /// holds when none of them is set.
+    pub fn check(&self) -> anyhow::Result<()> {
+        for dir in [&self.download_dir, &self.export_dir] {
+            std::fs::create_dir_all(dir)
+                .map_err(|err| anyhow::anyhow!("Failed to create `{}`: {err}", dir.display()))?;
         }
-        if let Some(export_dir) = &self.export_dir {
-            config.export_dir.clone_from(export_dir);
+        let library = self.download_dir.canonicalize()?;
+        let export = self.export_dir.canonicalize()?;
+        if export == library {
+            anyhow::bail!(
+                "The export directory is the library directory (`{}`). Exports would show up in Kavita a second time, give them a directory of their own with HITOMI_EXPORT_DIR",
+                library.display()
+            );
         }
+        if export.starts_with(&library) {
+            anyhow::bail!(
+                "The export directory `{}` lies inside the library directory `{}`. Exports would show up in Kavita a second time, give them a directory of their own with HITOMI_EXPORT_DIR",
+                export.display(),
+                library.display()
+            );
+        }
+        Ok(())
     }
 }
 
@@ -110,23 +164,94 @@ mod tests {
         assert_eq!(&ids[ids.len() - 2..], &[2, -1]);
     }
 
-    #[test]
-    fn pinned_dirs_win_over_the_config() {
-        let mut config: hitomi_core::config::Config = serde_json::from_value(serde_json::json!({
-            "downloadDir": "/somewhere", "exportDir": "/elsewhere", "enableFileLogger": true,
+    fn config_with(download_dir: &str, export_dir: &str) -> hitomi_core::config::Config {
+        serde_json::from_value(serde_json::json!({
+            "downloadDir": download_dir, "exportDir": export_dir, "enableFileLogger": true,
             "downloadFormat": "Webp", "dirFmt": "{id}",
             "proxy": {"enabled": false, "host": "127.0.0.1", "port": 1080,
                       "username": "", "password": "", "remoteDns": true},
             "comicConcurrency": 2, "imgConcurrency": 4, "language": "en-US"
         }))
-        .unwrap();
+        .unwrap()
+    }
 
-        PinnedDirs {
-            download_dir: Some(PathBuf::from("/data/library")),
-            export_dir: None,
-        }
-        .apply(&mut config);
+    #[test]
+    fn the_environment_names_the_directories_and_the_config_fills_the_rest() {
+        let config = config_with("/config/download", "/config/export");
+        let library = PathBuf::from("/data/library");
+        let export = PathBuf::from("/data/export");
+
+        let both = PinnedDirs::resolve(Some(&library), Some(&export), &config);
+        assert_eq!((&both.download_dir, &both.export_dir), (&library, &export));
+
+        // a variable that is not set leaves the directory the server starts with
+        let only_library = PinnedDirs::resolve(Some(&library), None, &config);
+        assert_eq!(only_library.export_dir, PathBuf::from("/config/export"));
+        let none = PinnedDirs::resolve(None, None, &config);
+        assert_eq!(none.download_dir, PathBuf::from("/config/download"));
+    }
+
+    #[test]
+    fn pinned_dirs_win_over_whatever_the_config_says() {
+        let mut config = config_with("/somewhere", "/elsewhere");
+        let pinned = PinnedDirs {
+            download_dir: PathBuf::from("/data/library"),
+            export_dir: PathBuf::from("/data/export"),
+        };
+        pinned.apply(&mut config);
         assert_eq!(config.download_dir, PathBuf::from("/data/library"));
-        assert_eq!(config.export_dir, PathBuf::from("/elsewhere"));
+        assert_eq!(config.export_dir, PathBuf::from("/data/export"));
+    }
+
+    fn temp_dirs(library: &str, export: &str) -> (PathBuf, PinnedDirs) {
+        let root = std::env::temp_dir().join(format!("hitomi-pinned-{}", rand::random::<u64>()));
+        let pinned = PinnedDirs {
+            download_dir: root.join(library),
+            export_dir: root.join(export),
+        };
+        (root, pinned)
+    }
+
+    #[test]
+    fn separate_directories_are_created_and_accepted() {
+        let (root, pinned) = temp_dirs("library", "export");
+        pinned.check().unwrap();
+        assert!(pinned.download_dir.is_dir() && pinned.export_dir.is_dir());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_export_dir_in_or_as_the_library_is_refused() {
+        for (library, export) in [
+            ("library", "library"),
+            ("library", "library/export"),
+            ("library", "library/a/b"),
+        ] {
+            let (root, pinned) = temp_dirs(library, export);
+            let err = pinned.check().unwrap_err().to_string();
+            assert!(
+                err.contains("HITOMI_EXPORT_DIR"),
+                "{library} / {export}: {err}"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_into_the_library_does_not_hide_the_overlap() {
+        let (root, pinned) = temp_dirs("library", "export");
+        std::fs::create_dir_all(&pinned.download_dir).unwrap();
+        std::os::unix::fs::symlink(&pinned.download_dir, &pinned.export_dir).unwrap();
+        assert!(pinned.check().is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_library_inside_the_export_dir_is_fine() {
+        // Kavita never sees the exports there, they land next to the library
+        let (root, pinned) = temp_dirs("exports/library", "exports");
+        pinned.check().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

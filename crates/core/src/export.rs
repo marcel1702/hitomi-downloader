@@ -167,15 +167,23 @@ pub fn pdf(context: &Context, comic: &Comic) -> anyhow::Result<()> {
         .get_comic_download_dir_name()
         .context("Failed to get comic download directory name")?;
     let pdf_path = export_dir.join(format!("{download_dir_name}.{extension}"));
-    let page_source = PageSource::open(download_dir).context(format!(
-        "Failed to open the pages of `{}`",
-        download_dir.display()
-    ))?;
-    create_pdf(&page_source, &pdf_path).context("Failed to create PDF")?;
+    write_pdf(download_dir, &pdf_path)?;
     // Set success to true to ensure that the end event is sent
     pdf_event_guard.success = true;
 
     Ok(())
+}
+
+/// Write the PDF of the comic downloaded to `download_dir` to `pdf_path`
+///
+/// Unlike [`pdf`] this needs no export directory and sends no events, the web version
+/// uses it to hand a PDF to a browser.
+pub fn write_pdf(download_dir: &Path, pdf_path: &Path) -> anyhow::Result<()> {
+    let page_source = PageSource::open(download_dir).context(format!(
+        "Failed to open the pages of `{}`",
+        download_dir.display()
+    ))?;
+    create_pdf(&page_source, pdf_path).context("Failed to create PDF")
 }
 
 /// Create a PDF with the pages of `page_source` and save it to `pdf_path`
