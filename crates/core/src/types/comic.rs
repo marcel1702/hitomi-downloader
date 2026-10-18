@@ -257,24 +257,45 @@ impl Comic {
         Ok(comic_export_dir)
     }
 
-    pub fn get_temp_download_dir(&self) -> anyhow::Result<PathBuf> {
+    /// Where the pages of this comic are kept while it downloads
+    pub fn get_temp_download_dir(&self, context: &Context) -> anyhow::Result<PathBuf> {
         let comic_download_dir = self
             .comic_download_dir
             .as_ref()
             .context("`comic_download_dir` field is `None`")?;
 
-        let comic_download_dir_name = self
-            .get_comic_download_dir_name()
-            .context("Failed to get comic download directory name")?;
-
-        let parent = comic_download_dir.parent().context(format!(
-            "Failed to get parent directory of `{}`",
-            comic_download_dir.display()
-        ))?;
-
-        let temp_download_dir = parent.join(format!(".downloading-{comic_download_dir_name}"));
-        Ok(temp_download_dir)
+        temp_download_dir_of(comic_download_dir, self.id, context.temp_dir())
     }
+}
+
+/// Where the pages of the comic `comic_id`, whose archive goes to `comic_download_dir`, are
+/// kept while it downloads
+///
+/// In `temp_root` if there is one, in a folder of the id of the comic: the folder name of the
+/// comic is not unique, a folder format without the id lets two comics share it. Otherwise in
+/// a `.downloading-<name>` folder next to the comic.
+fn temp_download_dir_of(
+    comic_download_dir: &Path,
+    comic_id: i32,
+    temp_root: Option<&Path>,
+) -> anyhow::Result<PathBuf> {
+    if let Some(temp_root) = temp_root {
+        return Ok(temp_root.join(comic_id.to_string()));
+    }
+
+    let comic_download_dir_name = comic_download_dir
+        .file_name()
+        .context(format!(
+            "Failed to get directory name of `{}`",
+            comic_download_dir.display()
+        ))?
+        .to_string_lossy();
+    let parent = comic_download_dir.parent().context(format!(
+        "Failed to get parent directory of `{}`",
+        comic_download_dir.display()
+    ))?;
+
+    Ok(parent.join(format!(".downloading-{comic_download_dir_name}")))
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, Type)]
@@ -291,4 +312,39 @@ pub struct Language {
     pub galleryid: i32,
     pub language_localname: String,
     pub name: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn without_a_temp_root_the_pages_go_next_to_the_comic() {
+        // the layout of the desktop app, which must stay as it is
+        let dir = Path::new("/library/doujinshi/artist/Title - 7");
+        assert_eq!(
+            temp_download_dir_of(dir, 7, None).unwrap(),
+            PathBuf::from("/library/doujinshi/artist/.downloading-Title - 7")
+        );
+    }
+
+    #[test]
+    fn with_a_temp_root_the_pages_are_kept_there_by_the_id_of_the_comic() {
+        let root = Path::new("/config/downloading");
+        // a folder format without the id lets two comics share a folder name
+        let first =
+            temp_download_dir_of(Path::new("/library/artist a/Title"), 1, Some(root)).unwrap();
+        let second =
+            temp_download_dir_of(Path::new("/library/artist b/Title"), 2, Some(root)).unwrap();
+        assert_eq!(first, PathBuf::from("/config/downloading/1"));
+        assert_ne!(first, second);
+        assert!(!first.starts_with("/library"));
+    }
+
+    #[test]
+    fn a_comic_folder_without_a_name_has_no_temp_folder_next_to_it() {
+        assert!(temp_download_dir_of(Path::new("/"), 1, None).is_err());
+        // outside the library the name of the comic folder is not needed
+        assert!(temp_download_dir_of(Path::new("/"), 1, Some(Path::new("/tmp/x"))).is_ok());
+    }
 }

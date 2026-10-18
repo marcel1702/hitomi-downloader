@@ -24,7 +24,8 @@ use std::{io::IsTerminal, net::SocketAddr, path::Path, process::ExitCode, sync::
 use anyhow::{bail, Context as _};
 use axum::{http::StatusCode, middleware, routing::get, Json, Router};
 use hitomi_core::{
-    download_manager::DownloadTaskState, events::DownloadTaskEvent, logger, Context,
+    context::Options, download_manager::DownloadTaskState, events::DownloadTaskEvent, logger,
+    Context,
 };
 use serde_json::{json, Value};
 use tokio::{
@@ -68,12 +69,15 @@ async fn run() -> anyhow::Result<()> {
 
     let (events, _) = broadcast::channel(CHANNEL_CAPACITY);
     let comics = Arc::new(ComicCache::default());
-    let context = Context::init(
+    let context = Context::init_with(
         settings.config_dir.clone(),
         tokio::runtime::Handle::current(),
         BroadcastSink {
             events: events.clone(),
             comics: comics.clone(),
+        },
+        Options {
+            temp_dir: Some(settings.temp_dir.clone()),
         },
     )?;
     let pinned_dirs = PinnedDirs::resolve(
@@ -82,6 +86,7 @@ async fn run() -> anyhow::Result<()> {
         &context.config().read(),
     );
     pin_dirs(&context, &pinned_dirs)?;
+    state::check_temp_dir(&settings.temp_dir, &pinned_dirs.download_dir)?;
     logger::init(&context, &[env!("CARGO_CRATE_NAME")])?;
     let auth = Auth::new(&settings.auth, &settings.config_dir, Policy::default())?;
 
@@ -287,12 +292,15 @@ mod tests {
 
             let (events, _) = broadcast::channel(16);
             let comics = Arc::new(ComicCache::default());
-            let context = Context::init(
+            let context = Context::init_with(
                 root.join("config"),
                 runtime.handle().clone(),
                 BroadcastSink {
                     events: events.clone(),
                     comics: comics.clone(),
+                },
+                Options {
+                    temp_dir: Some(root.join("config").join("downloading")),
                 },
             )
             .unwrap();

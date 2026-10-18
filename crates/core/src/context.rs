@@ -24,8 +24,21 @@ pub struct Context {
     inner: Arc<Inner>,
 }
 
+/// What a context needs beyond where it keeps its files
+#[derive(Debug, Clone, Default)]
+pub struct Options {
+    /// Where the pages of a download are kept until the comic is packed into its archive
+    ///
+    /// Without one the pages go into a `.downloading-<name>` folder next to the comic, as the
+    /// desktop app does. With one, no page ever lies in the library: the web version keeps
+    /// them in its config volume, so a scan of the library can not find a half finished
+    /// download, and a network share only gets the finished archive written once.
+    pub temp_dir: Option<PathBuf>,
+}
+
 struct Inner {
     data_dir: PathBuf,
+    temp_dir: Option<PathBuf>,
     runtime: tokio::runtime::Handle,
     events: Box<dyn EventSink>,
     config: RwLock<Config>,
@@ -47,6 +60,16 @@ impl Context {
         runtime: tokio::runtime::Handle,
         events: impl EventSink + 'static,
     ) -> anyhow::Result<Context> {
+        Context::init_with(data_dir, runtime, events, Options::default())
+    }
+
+    /// Like [`Context::init`], with the `options` of this process
+    pub fn init_with(
+        data_dir: PathBuf,
+        runtime: tokio::runtime::Handle,
+        events: impl EventSink + 'static,
+        options: Options,
+    ) -> anyhow::Result<Context> {
         std::fs::create_dir_all(&data_dir).context(format!(
             "create data directory `{}` failed",
             data_dir.display()
@@ -56,6 +79,7 @@ impl Context {
         let context = Context {
             inner: Arc::new(Inner {
                 data_dir,
+                temp_dir: options.temp_dir,
                 runtime,
                 events: Box::new(events),
                 config: RwLock::new(config),
@@ -86,6 +110,11 @@ impl Context {
     /// Where `config.json` and the logs live
     pub fn data_dir(&self) -> &Path {
         &self.inner.data_dir
+    }
+
+    /// Where the pages of a download are kept, if not next to the comic, see [`Options`]
+    pub fn temp_dir(&self) -> Option<&Path> {
+        self.inner.temp_dir.as_deref()
     }
 
     pub fn logs_dir(&self) -> PathBuf {

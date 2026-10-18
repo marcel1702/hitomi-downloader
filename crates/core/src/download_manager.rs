@@ -408,7 +408,7 @@ impl DownloadTask {
         let id = self.comic.id;
         let comic_title = &self.comic.title;
 
-        let temp_download_dir = match self.comic.get_temp_download_dir() {
+        let temp_download_dir = match self.comic.get_temp_download_dir(&self.context) {
             Ok(temp_download_dir) => temp_download_dir,
             Err(err) => {
                 let err_title = format!("Failed to get temp download directory of `{comic_title}`");
@@ -677,6 +677,14 @@ impl DownloadTask {
             cbz_tmp_path.display(),
             cbz_path.display()
         ))?;
+        // The pages are deleted below, so the rename has to be on the disk before that. A
+        // directory that can not be synced does not fail the download, the archive is on the
+        // disk already, and a rename lost to a crash leaves the complete `.cbz.tmp` behind.
+        if let Err(err) = pages::sync_dir(&download_dir) {
+            let err_title = format!("Failed to sync the directory of `{comic_title}` to the disk");
+            let string_chain = anyhow::Error::from(err).to_string_chain();
+            tracing::warn!(err_title, message = string_chain);
+        }
         tracing::trace!(
             id,
             comic_title,
@@ -1341,5 +1349,247 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // The tests that need a context share one, there is only one per process
+
+    struct NoEvents;
+
+    impl crate::events::EventSink for NoEvents {
+        fn emit(&self, _event: crate::events::Event) {}
+    }
+
+    /// The context of the tests and the root of what they write
+    fn test_context() -> &'static (Context, PathBuf) {
+        static CONTEXT: std::sync::OnceLock<(Context, PathBuf)> = std::sync::OnceLock::new();
+        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+        CONTEXT.get_or_init(|| {
+            let runtime = RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().unwrap());
+            let root =
+                std::env::temp_dir().join(format!("hitomi-core-test-{}", uuid::Uuid::new_v4()));
+            let context = Context::init_with(
+                root.join("config"),
+                runtime.handle().clone(),
+                NoEvents,
+                crate::context::Options {
+                    temp_dir: Some(root.join("config").join("downloading")),
+                },
+            )
+            .unwrap();
+            (context, root)
+        })
+    }
+
+    /// A task for the comic `id` whose archive goes to `library/<name>`
+    fn test_task(id: i32, library: &Path, name: &str) -> DownloadTask {
+        let (context, _) = test_context();
+        let comic = Comic {
+            id,
+            title: name.to_string(),
+            comic_download_dir: Some(library.join(name)),
+            ..Comic::default()
+        };
+        DownloadTask {
+            context: context.clone(),
+            download_manager: context.download_manager().clone(),
+            comic: Arc::new(comic),
+            state_sender: watch::channel(DownloadTaskState::Pending).0,
+            downloaded_img_count: Arc::new(AtomicU32::new(0)),
+            total_img_count: Arc::new(AtomicU32::new(0)),
+            download_format: DownloadFormat::Webp,
+        }
+    }
+
+    /// Bytes that do not compress away, so writing an archive takes a moment
+    fn noise(len: usize, seed: u32) -> Vec<u8> {
+        let mut state = seed.wrapping_mul(2_654_435_761).wrapping_add(1);
+        (0..len)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 24) as u8
+            })
+            .collect()
+    }
+
+    const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "gif", "avif"];
+    /// What Kavita takes for an archive, matched against the last extension only
+    const ARCHIVE_EXTENSIONS: [&str; 8] = ["cbz", "zip", "rar", "cbr", "7z", "cb7", "cbt", "gz"];
+
+    fn extension_of(name: &str) -> String {
+        Path::new(name)
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+    }
+
+    /// Every file under `dir`, as a path relative to it
+    fn files_under(dir: &Path) -> Vec<String> {
+        walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+            .map(|entry| {
+                entry
+                    .path()
+                    .strip_prefix(dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_pages_of_a_download_never_touch_the_library() {
+        let (_, root) = test_context();
+        let library = root.join("library-pages");
+        std::fs::create_dir_all(&library).unwrap();
+        let task = test_task(41, &library, "Pages Comic - 41");
+
+        let temp_dir = task.create_temp_download_dir().unwrap();
+        assert_eq!(temp_dir, root.join("config").join("downloading").join("41"));
+        for (index, name) in ["0001.webp", "0002.webp", "0002.webp.part"]
+            .iter()
+            .enumerate()
+        {
+            std::fs::write(temp_dir.join(name), noise(1024, index as u32)).unwrap();
+        }
+
+        // pages, complete and partly written ones, are all outside, the library has nothing
+        assert_eq!(std::fs::read_dir(&library).unwrap().count(), 0);
+        std::fs::remove_dir_all(root.join("config").join("downloading").join("41")).unwrap();
+    }
+
+    #[test]
+    fn the_library_only_ever_holds_the_archive_and_never_a_cut_off_one() {
+        let (_, root) = test_context();
+        let library = root.join("library-pack");
+        std::fs::create_dir_all(&library).unwrap();
+        let name = "Pack Comic - 42";
+        let task = test_task(42, &library, name);
+        let temp_dir = task.create_temp_download_dir().unwrap();
+        // 60 pages of 200 KB, so that writing the archive takes long enough to be watched
+        for page in 1..=60u32 {
+            std::fs::write(
+                temp_dir.join(format!("{page:04}.webp")),
+                noise(200 * 1024, page),
+            )
+            .unwrap();
+        }
+
+        // what a scan of the library could see: every file of it, polled while the archive is written
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watcher = {
+            let (library, stop) = (library.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut seen = std::collections::BTreeSet::new();
+                let mut archives_checked = 0;
+                let mut broken = Vec::new();
+                while !stop.load(Ordering::Relaxed) {
+                    for file in files_under(&library) {
+                        if extension_of(&file) == "cbz" {
+                            // a scan opens whatever carries an archive extension, it must be whole
+                            let opened = std::fs::File::open(library.join(&file))
+                                .map_err(|err| err.to_string())
+                                .and_then(|f| {
+                                    zip::ZipArchive::new(f).map_err(|err| err.to_string())
+                                });
+                            match opened {
+                                Ok(archive) if archive.len() == 61 => archives_checked += 1,
+                                Ok(archive) => {
+                                    broken.push(format!("{file}: {} entries", archive.len()))
+                                }
+                                Err(err) => broken.push(format!("{file}: {err}")),
+                            }
+                        }
+                        seen.insert(file);
+                    }
+                }
+                (seen, archives_checked, broken)
+            })
+        };
+
+        task.pack_temp_download_dir(&temp_dir).unwrap();
+        stop.store(true, Ordering::Relaxed);
+        let (seen, archives_checked, broken) = watcher.join().unwrap();
+
+        // the watcher has to have seen the archive in the making and whole ones, else it proves nothing
+        assert!(
+            seen.iter().any(|file| file.ends_with(".cbz.tmp")),
+            "the watcher never saw the archive being written: {seen:?}"
+        );
+        assert!(
+            archives_checked > 0,
+            "the watcher never opened the finished archive: {seen:?}"
+        );
+        assert!(
+            broken.is_empty(),
+            "a scan could have opened a cut off archive: {broken:?}"
+        );
+        for file in &seen {
+            let file_name = Path::new(file).file_name().unwrap().to_string_lossy();
+            assert!(
+                file_name == format!("{name}.cbz.tmp") || file_name == format!("{name}.cbz"),
+                "unexpected file in the library: {file}"
+            );
+            // by the last extension, as Kavita matches it, the archive in the making is `.tmp`
+            if file_name.ends_with(".tmp") {
+                assert!(
+                    !ARCHIVE_EXTENSIONS.contains(&extension_of(file).as_str()),
+                    "{file}"
+                );
+            }
+            assert!(
+                !IMAGE_EXTENSIONS.contains(&extension_of(file).as_str()),
+                "{file}"
+            );
+        }
+        // finished: the archive, and nothing else of the download is left
+        assert_eq!(files_under(&library), vec![format!("{name}/{name}.cbz")]);
+        assert!(
+            !temp_dir.exists(),
+            "the pages are deleted once the archive is on the disk"
+        );
+    }
+
+    #[test]
+    fn a_failed_packing_keeps_the_pages_for_the_next_run() {
+        let (_, root) = test_context();
+        // a file where the library should be makes creating the comic folder fail
+        let library = root.join("library-is-a-file");
+        std::fs::write(&library, b"not a directory").unwrap();
+        let task = test_task(43, &library, "Failing Comic - 43");
+        let temp_dir = task.create_temp_download_dir().unwrap();
+        std::fs::write(temp_dir.join("0001.webp"), noise(1024, 1)).unwrap();
+
+        assert!(task.pack_temp_download_dir(&temp_dir).is_err());
+        assert_eq!(files_under(&temp_dir), vec!["0001.webp".to_string()]);
+        // and a retry, with the library back, packs them without downloading anything
+        std::fs::remove_file(&library).unwrap();
+        std::fs::create_dir_all(&library).unwrap();
+        task.pack_temp_download_dir(&temp_dir).unwrap();
+        assert_eq!(
+            files_under(&library),
+            vec!["Failing Comic - 43/Failing Comic - 43.cbz".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_archive_is_complete_when_the_function_returns() {
+        let (_, root) = test_context();
+        let library = root.join("library-whole");
+        std::fs::create_dir_all(&library).unwrap();
+        let task = test_task(44, &library, "Whole Comic - 44");
+        let temp_dir = task.create_temp_download_dir().unwrap();
+        std::fs::write(temp_dir.join("0001.webp"), noise(4096, 7)).unwrap();
+
+        task.pack_temp_download_dir(&temp_dir).unwrap();
+        let cbz = library
+            .join("Whole Comic - 44")
+            .join("Whole Comic - 44.cbz");
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(cbz).unwrap()).unwrap();
+        assert_eq!(archive.len(), 2);
+        assert!(archive.by_name("ComicInfo.xml").is_ok());
+        assert_eq!(archive.by_name("0001.webp").unwrap().size(), 4096);
     }
 }

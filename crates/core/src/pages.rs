@@ -123,11 +123,36 @@ pub fn write_cbz(
         ))?;
     }
 
-    zip_writer
+    let cbz_file = zip_writer
         .finish()
         .context(format!("Failed to close `{}`", cbz_path.display()))?;
+    // Closing a file does not put it on the disk, the system keeps the data in memory for
+    // a while. The archive is renamed to its final name right after this and the pages it
+    // was made from are deleted, so it has to be on the disk before that. Otherwise a crash
+    // or a power loss at the wrong moment leaves an empty or cut off archive under the
+    // final name, and the pages are gone.
+    cbz_file.sync_all().context(format!(
+        "Failed to write `{}` to the disk",
+        cbz_path.display()
+    ))?;
 
     Ok(())
+}
+
+/// Make the entries of `dir` durable, a rename in it above all
+///
+/// Where a directory can not be synced, on Windows or on some network file systems, this
+/// is a no-op or an error the caller may ignore: the archive itself is already on the disk.
+pub fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(dir)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
 }
 
 /// The pages of a downloaded comic
