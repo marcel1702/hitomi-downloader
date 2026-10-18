@@ -280,6 +280,7 @@ pub async fn url_from_url_from_hash(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Ext {
     Webp,
     Avif,

@@ -14,7 +14,6 @@ use anyhow::{anyhow, Context as _};
 use bytes::Bytes;
 use indexmap::IndexMap;
 use parking_lot::RwLock;
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::{
@@ -27,7 +26,7 @@ use crate::{
     events::{DownloadSpeedEvent, DownloadTaskEvent},
     extensions::AnyhowErrorToStringChain,
     hitomi::{image_url_from_image, invalidate_gg, Ext, GalleryFiles},
-    hitomi_client::{HitomiClient, UnexpectedStatus},
+    hitomi_client::{fetch_with_fresh_url, HitomiClient},
     pages,
     queue::{self, StoredTask},
     types::{Comic, ComicInfo, DownloadFormat},
@@ -931,12 +930,6 @@ fn img_format_of(file: &GalleryFiles, download_format: DownloadFormat) -> Downlo
     }
 }
 
-/// Check if `err` says the image is not at the url, which is what a stale `gg.js` causes
-fn is_stale_url_error(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<UnexpectedStatus>()
-        .is_some_and(|err| matches!(err.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND))
-}
-
 /// How often an image whose transfer broke off is downloaded again before it counts as failed
 const TRANSFER_RETRIES: u32 = 3;
 
@@ -1119,32 +1112,17 @@ impl DownloadImgTask {
 
     /// Download the image, building its url right before the request
     ///
-    /// The url depends on `gg.js`, which Hitomi rotates. A url built when the comic was
-    /// queued can be stale by the time the image is downloaded, above all after a pause.
-    /// If the server says the image is not there, the url is built once more from a fresh
-    /// `gg.js` before giving up.
+    /// A url built when the comic was queued can be stale by the time the image is
+    /// downloaded, above all after a pause, see [`fetch_with_fresh_url`].
     async fn fetch_img_data_once(&self) -> anyhow::Result<Bytes> {
         let hitomi_client = self.hitomi_client();
-        let url = self.img_url().await?;
-        let err = match hitomi_client.get_img_data(&url).await {
-            Ok(img_data) => return Ok(img_data),
-            Err(err) => err,
-        };
-
-        if !is_stale_url_error(&err) {
-            return Err(err).context(format!("Failed to download `{url}`"));
-        }
-
-        tracing::debug!(
-            url,
-            "Image url looks stale, building it again from a fresh gg.js"
-        );
-        invalidate_gg().await;
-        let fresh_url = self.img_url().await?;
-        hitomi_client
-            .get_img_data(&fresh_url)
-            .await
-            .context(format!("Failed to download `{fresh_url}`"))
+        let hitomi_client = &hitomi_client;
+        fetch_with_fresh_url(
+            || self.img_url(),
+            |url| async move { hitomi_client.get_img_data(&url).await },
+            invalidate_gg,
+        )
+        .await
     }
 
     async fn img_url(&self) -> anyhow::Result<String> {
@@ -1329,6 +1307,16 @@ impl Comic {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hitomi_client::UnexpectedStatus;
+    use reqwest::StatusCode;
+
+    fn status_error(status: StatusCode) -> anyhow::Error {
+        UnexpectedStatus {
+            status,
+            body: String::new(),
+        }
+        .into()
+    }
 
     #[test]
     fn growing_adds_permits_at_once() {
@@ -1401,34 +1389,6 @@ mod tests {
             img_format_of(&gallery_file(1), DownloadFormat::Webp),
             DownloadFormat::Webp
         );
-    }
-
-    fn status_error(status: StatusCode) -> anyhow::Error {
-        UnexpectedStatus {
-            status,
-            body: String::new(),
-        }
-        .into()
-    }
-
-    #[test]
-    fn missing_image_counts_as_stale_url() {
-        assert!(is_stale_url_error(&status_error(StatusCode::NOT_FOUND)));
-        assert!(is_stale_url_error(&status_error(StatusCode::FORBIDDEN)));
-        // still recognised once a caller added context
-        let wrapped = status_error(StatusCode::NOT_FOUND).context("Failed to download");
-        assert!(is_stale_url_error(&wrapped));
-    }
-
-    #[test]
-    fn other_failures_are_not_retried_with_a_fresh_url() {
-        assert!(!is_stale_url_error(&status_error(
-            StatusCode::INTERNAL_SERVER_ERROR
-        )));
-        assert!(!is_stale_url_error(&status_error(
-            StatusCode::TOO_MANY_REQUESTS
-        )));
-        assert!(!is_stale_url_error(&anyhow!("connection reset")));
     }
 
     #[tokio::test]

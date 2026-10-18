@@ -19,7 +19,8 @@ use crate::{
     export,
     extensions::AnyhowErrorToStringChain,
     hitomi::Suggestion,
-    hitomi::{image_url_from_image, Ext, GalleryFiles},
+    hitomi::{image_url_from_image, invalidate_gg, Ext, GalleryFiles},
+    hitomi_client::fetch_with_fresh_url,
     logger,
     pages::PageSource,
     types::{Comic, SearchResult, SearchSort},
@@ -94,12 +95,26 @@ pub fn save_config(context: &Context, mut config: Config) -> CommandResult<()> {
     Ok(())
 }
 
+/// Refuse a page number below 1, the first page is 1
+///
+/// Before the search runs: it is a request to Hitomi, and the number can not be right after it.
+fn check_page_num(err_title: &str, page_num: usize) -> CommandResult<()> {
+    if page_num < 1 {
+        return Err(CommandError::from(
+            err_title,
+            anyhow!("There is no page {page_num}, the first page is 1"),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn search(
     context: &Context,
     query: &str,
     page_num: usize,
     sort: SearchSort,
 ) -> CommandResult<SearchResult> {
+    check_page_num("search failed", page_num)?;
     let search_result = context
         .hitomi_client()
         .search(query, page_num, sort)
@@ -114,6 +129,7 @@ pub async fn get_page(
     ids: Vec<i32>,
     page_num: usize,
 ) -> CommandResult<SearchResult> {
+    check_page_num("get page failed", page_num)?;
     let search_result = context
         .hitomi_client()
         .get_page(ids, page_num)
@@ -462,19 +478,24 @@ pub async fn get_image_data(
         }
     }
 
-    // Fallback to network, preferring the smaller avif if the image is available as one
+    // Fallback to network, preferring the smaller avif if the image is available as one.
+    // The url is built from `gg.js` as the download builds it, again from a fresh one if it
+    // is stale: the viewer would show a broken page until a restart otherwise.
+    let hitomi_client = &context.hitomi_client();
+    let file = &file;
+    let fetch = |ext: Ext| {
+        fetch_with_fresh_url(
+            move || image_url_from_image(comic_id, file, ext),
+            |url| async move { hitomi_client.get_img_data(&url).await },
+            invalidate_gg,
+        )
+    };
     let mut result = Err(anyhow!("Image is not available as avif"));
     if file.hasavif != 0 {
-        let url = image_url_from_image(comic_id, &file, Ext::Avif)
-            .await
-            .map_err(|err| CommandError::from("Failed to get avif url", err))?;
-        result = context.hitomi_client().get_img_data(&url).await;
+        result = fetch(Ext::Avif).await;
     }
     if result.is_err() {
-        let url = image_url_from_image(comic_id, &file, Ext::Webp)
-            .await
-            .map_err(|err| CommandError::from("Failed to get webp url", err))?;
-        result = context.hitomi_client().get_img_data(&url).await;
+        result = fetch(Ext::Webp).await;
     }
 
     let data = result.map_err(|err| CommandError::from("Failed to get image data", err))?;
