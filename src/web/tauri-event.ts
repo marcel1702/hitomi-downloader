@@ -4,7 +4,7 @@
 // listener. The browser reconnects by itself after the connection broke, and the server then
 // sends the running downloads first, so the download list catches up.
 
-import { loggedIn, toLogin } from './session.ts'
+import { isLeaving, loggedIn, toLogin } from './session.ts'
 
 export interface Event<T> {
   event: string
@@ -38,7 +38,7 @@ function eventSource(): EventSource {
  * takes over then.
  */
 async function onError() {
-  if (source?.readyState !== EventSource.CLOSED) {
+  if (isLeaving() || source?.readyState !== EventSource.CLOSED) {
     return
   }
   source = undefined
