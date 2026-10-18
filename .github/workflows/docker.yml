@@ -75,11 +75,21 @@ jobs:
           got=$(docker compose config --format json | jq -r '.services["hitomi-downloader"].environment.HITOMI_PASSWORD_HASH')
           got=${got//\$\$/\$}
           test "$got" = "$hash" || { echo "the hash arrived as '$got'" >&2; exit 1; }
-          # without a login or a library the compose file refuses, saying what is missing
-          if env -u HITOMI_USERNAME docker compose --env-file /dev/null config > /dev/null 2> "$RUNNER_TEMP/compose-error"; then
-            echo "the compose file accepted a missing login" >&2; exit 1
-          fi
-          grep -q 'HITOMI_USERNAME' "$RUNNER_TEMP/compose-error"
+          # Without a login, a hash or a library the compose file refuses, saying what is missing.
+          # Compose names only one of several missing variables, in no fixed order, so one is
+          # left out at a time.
+          missing() {
+            name=$1
+            assignments=()
+            for pair in HITOMI_USERNAME=admin HITOMI_PASSWORD_HASH=hash "LIBRARY_PATH=$RUNNER_TEMP"; do
+              [ "${pair%%=*}" = "$name" ] || assignments+=("$pair")
+            done
+            if env -i PATH="$PATH" HOME="$HOME" "${assignments[@]}" docker compose --env-file /dev/null config > /dev/null 2> "$RUNNER_TEMP/compose-error"; then
+              echo "the compose file accepted a missing $name" >&2; exit 1
+            fi
+            grep -q "$name" "$RUNNER_TEMP/compose-error" || { echo "no word of $name in:" >&2; cat "$RUNNER_TEMP/compose-error" >&2; exit 1; }
+          }
+          for name in HITOMI_USERNAME HITOMI_PASSWORD_HASH LIBRARY_PATH; do missing "$name"; done
 
   image:
     name: Image (build and start, amd64)
