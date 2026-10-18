@@ -27,7 +27,7 @@ services:
       HITOMI_USERNAME: ${HITOMI_USERNAME:?set HITOMI_USERNAME in .env}
       # In the .env file the hash is written in single quotes. Written here, in this file, every
       # `$` of it would have to be doubled to `$$`.
-      HITOMI_PASSWORD_HASH: ${HITOMI_PASSWORD_HASH:?create the hash with: docker run --rm -it ghcr.io/marcel1702/hitomi-downloader hash-password}
+      HITOMI_PASSWORD_HASH: "${HITOMI_PASSWORD_HASH:?create the hash with the command docker run --rm -it ghcr.io/marcel1702/hitomi-downloader hash-password}"
       # Where the library and the exports are mounted in this container, any path will do
       HITOMI_LIBRARY_DIR: /library
       HITOMI_EXPORT_DIR: /export
