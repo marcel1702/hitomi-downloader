@@ -76,6 +76,11 @@ pub enum DownloadTaskState {
 
 impl DownloadManager {
     pub fn new(context: &Context) -> Self {
+        Self::with_queue_file(context, context.queue_file())
+    }
+
+    /// A manager that keeps its queue in `queue_file`, which a test gives a manager of its own
+    fn with_queue_file(context: &Context, queue_file: Option<&Path>) -> Self {
         let (comic_concurrency, img_concurrency) = {
             let config = context.config().read();
             (config.comic_concurrency, config.img_concurrency)
@@ -88,9 +93,7 @@ impl DownloadManager {
             img_limit: Arc::new(AtomicU32::new(img_concurrency)),
             byte_per_sec: Arc::new(AtomicU64::new(0)),
             download_tasks: Arc::new(RwLock::new(IndexMap::new())),
-            queue_file: context
-                .queue_file()
-                .map(|path| Arc::new(AtomicFile::new(path.to_path_buf()))),
+            queue_file: queue_file.map(|path| Arc::new(AtomicFile::new(path.to_path_buf()))),
             queue_changed: Arc::new(Notify::new()),
         };
 
@@ -127,7 +130,7 @@ impl DownloadManager {
                 return Ok(());
             }
         }
-        let task = DownloadTask::new(self.context.clone(), comic, download_format, state)
+        let task = DownloadTask::new(self, comic, download_format, state)
             .context(format!("Failed to create download task with id `{id}`",))?;
         if state == Failed {
             // nothing runs, the task is a line in the list that can be retried
@@ -350,12 +353,6 @@ impl DownloadManager {
     }
 }
 
-/// Make `sem` hold `new_limit` permits, where `limit` tracks how many it is meant to hold
-///
-/// Growing takes effect at once. Permits held by running downloads can not be taken back,
-/// so shrinking returns a future that waits for enough of them to be released and then
-/// retires them for good. Until then a semaphore that is fair, as tokio's is, already lets
-/// no new download start ahead of that future.
 /// The state a stored download comes back in, none for one that should not be stored
 ///
 /// One that was running waits for its turn like the others.
@@ -367,6 +364,12 @@ fn restored_state(stored: DownloadTaskState) -> Option<DownloadTaskState> {
     }
 }
 
+/// Make `sem` hold `new_limit` permits, where `limit` tracks how many it is meant to hold
+///
+/// Growing takes effect at once. Permits held by running downloads can not be taken back,
+/// so shrinking returns a future that waits for enough of them to be released and then
+/// retires them for good. Until then a semaphore that is fair, as tokio's is, already lets
+/// no new download start ahead of that future.
 fn resize_semaphore(
     sem: &Arc<Semaphore>,
     limit: &AtomicU32,
@@ -401,11 +404,12 @@ struct DownloadTask {
 
 impl DownloadTask {
     pub fn new(
-        context: Context,
+        download_manager: &DownloadManager,
         mut comic: Comic,
         download_format: DownloadFormat,
         state: DownloadTaskState,
     ) -> anyhow::Result<Self> {
+        let context = download_manager.context.clone();
         comic
             .update_dir_name_fields_by_fmt(&context)
             .context(format!(
@@ -413,7 +417,7 @@ impl DownloadTask {
                 comic.title
             ))?;
 
-        let download_manager = context.download_manager().clone();
+        let download_manager = download_manager.clone();
         let (state_sender, _) = watch::channel(state);
         // a task that waits for a resume or a retry shows the size of its comic already
         let total_img_count = if state == DownloadTaskState::Pending {
@@ -445,18 +449,15 @@ impl DownloadTask {
         state_receiver.mark_changed();
         let mut permit = None;
         loop {
-            let state = *state_receiver.borrow();
-            let state_is_downloading = state == DownloadTaskState::Downloading;
-            let state_is_pending = state == DownloadTaskState::Pending;
-            // The download sets its end state itself, and may have something left to do after
-            // that. It has to be polled until it is done: it holds the place of this download,
-            // which is only given back when this function ends.
-            let state_is_ending = matches!(
-                state,
-                DownloadTaskState::Completed | DownloadTaskState::Failed
-            );
+            let state_is_pending = *state_receiver.borrow() == DownloadTaskState::Pending;
+            // The download runs whenever it holds a place, and only then: a pause gives the
+            // place back and stops polling it. It is polled by the place and not by the state,
+            // because it sets its end state itself and still has work after that, the queue
+            // file above all. A guard on the state would stop polling it right there, it would
+            // never return, and the place, which is only given back when this loop ends,
+            // would be lost for good.
             tokio::select! {
-                () = &mut download_comic_task, if (state_is_downloading || state_is_ending) && permit.is_some() => break,
+                () = &mut download_comic_task, if permit.is_some() => break,
                 control_flow = self.acquire_comic_permit(&mut permit), if state_is_pending => {
                     match control_flow {
                         ControlFlow::Continue(()) => continue,
@@ -588,10 +589,11 @@ impl DownloadTask {
 
         self.set_state(DownloadTaskState::Completed);
         self.emit_download_task_update_event();
-        // Not after the delay of the writer: a restart in between would download it again.
-        // And not waited for: nothing may wait here once the state is `Completed`, see `process`.
-        let save = self.download_manager.clone().save_queue_in_background();
-        self.context.spawn(save);
+        // Not after the delay of the writer: a restart in between would download it again
+        self.download_manager
+            .clone()
+            .save_queue_in_background()
+            .await;
     }
 
     fn create_temp_download_dir(&self) -> Option<PathBuf> {
@@ -1763,10 +1765,26 @@ mod tests {
         }
     }
 
+    /// Wait up to 10 s for `done`, `false` if it never came
+    fn eventually(mut done: impl FnMut() -> bool) -> bool {
+        for _ in 0..200 {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
     #[test]
     fn finished_downloads_give_their_place_back() {
-        let (context, _) = test_context();
-        let manager = context.download_manager();
+        let (context, root) = test_context();
+        // a manager of its own: the others are changed by other tests, its concurrency and
+        // its queue. And a queue file of its own, which the end of a download writes and
+        // waits for, after its state is `Completed` already: if the download were not polled
+        // to its end, it would keep its place for ever
+        let queue_file = root.join(format!("queue-{}.json", uuid::Uuid::new_v4()));
+        let manager = DownloadManager::with_queue_file(context, Some(&queue_file));
         // more downloads than places, one after the other: if a finished download kept its
         // place, the ones that come after the first few would wait on `Pending` for ever
         let places = manager.comic_limit.load(Ordering::Relaxed);
@@ -1774,28 +1792,26 @@ mod tests {
         for id in &ids {
             manager.create_download_task(pageless_comic(*id)).unwrap();
         }
-        let wait_for_end = || {
-            for _ in 0..200 {
-                let states: Vec<_> = ids.iter().map(|id| state_of(manager, *id)).collect();
-                if states
-                    .iter()
-                    .all(|state| *state == Some(DownloadTaskState::Completed))
-                {
-                    return true;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            false
+        let states = || {
+            ids.iter()
+                .map(|id| state_of(&manager, *id))
+                .collect::<Vec<_>>()
         };
         assert!(
-            wait_for_end(),
+            eventually(|| states()
+                .iter()
+                .all(|state| *state == Some(DownloadTaskState::Completed))),
             "not all downloads completed: {:?}",
-            ids.iter()
-                .map(|id| state_of(manager, *id))
-                .collect::<Vec<_>>()
+            states()
         );
-        // and every place is free again
-        assert_eq!(manager.comic_sem.available_permits(), places as usize);
+        // and every place is free again, a moment after the state: when the task ends
+        assert!(
+            eventually(|| manager.comic_sem.available_permits() == places as usize),
+            "{} of {places} places are free",
+            manager.comic_sem.available_permits()
+        );
+        // the last write of the queue file was waited for, it holds none of them
+        assert!(queue::load(&queue_file).is_empty());
     }
 
     /// A task for the comic `id` whose archive goes to `library/<name>`
@@ -1897,13 +1913,18 @@ mod tests {
 
         // what a scan of the library could see: every file of it, polled while the archive is written
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = Arc::new(std::sync::Barrier::new(2));
         let watcher = {
-            let (library, stop) = (library.clone(), stop.clone());
+            let (library, stop, started) = (library.clone(), stop.clone(), started.clone());
             std::thread::spawn(move || {
                 let mut seen = std::collections::BTreeSet::new();
                 let mut archives_checked = 0;
                 let mut broken = Vec::new();
-                while !stop.load(Ordering::Relaxed) {
+                started.wait();
+                loop {
+                    // one more pass once the archive is done, on a busy machine the watcher
+                    // may not have come round to it before it is told to stop
+                    let last = stop.load(Ordering::SeqCst);
                     for file in files_under(&library) {
                         if extension_of(&file) == "cbz" {
                             // a scan opens whatever carries an archive extension, it must be whole
@@ -1922,13 +1943,17 @@ mod tests {
                         }
                         seen.insert(file);
                     }
+                    if last {
+                        break;
+                    }
                 }
                 (seen, archives_checked, broken)
             })
         };
 
+        started.wait();
         task.pack_temp_download_dir(&temp_dir).unwrap();
-        stop.store(true, Ordering::Relaxed);
+        stop.store(true, Ordering::SeqCst);
         let (seen, archives_checked, broken) = watcher.join().unwrap();
 
         // the watcher has to have seen the archive in the making and whole ones, else it proves nothing
