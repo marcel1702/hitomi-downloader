@@ -19,7 +19,9 @@ const themeOverrides: GlobalThemeOverrides = {
     <n-modal-provider>
       <n-notification-provider placement="bottom-right">
         <n-message-provider>
-          <app-content />
+          <n-dialog-provider>
+            <app-content />
+          </n-dialog-provider>
         </n-message-provider>
       </n-notification-provider>
     </n-modal-provider>

@@ -5,6 +5,7 @@
 pub mod api;
 pub mod config;
 pub mod context;
+pub mod delete;
 pub mod download_manager;
 pub mod errors;
 pub mod events;

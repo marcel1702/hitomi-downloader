@@ -72,6 +72,7 @@ pub fn run() {
             get_synced_comic,
             get_image_data,
             download_comics_by_ids,
+            delete_comic,
         ])
         // Register every event the frontend can listen to
         .events(tauri_specta::collect_events![

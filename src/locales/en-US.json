@@ -117,6 +117,15 @@
     "export_all_cbz_started": "Exporting {count} comics as CBZ...",
     "export_all_pdf_started": "Exporting {count} comics as PDF..."
   },
+  "delete": {
+    "button": "Delete",
+    "selection": "Delete Selection",
+    "title": "Delete from the library?",
+    "confirm_one": "\"{title}\" is deleted from the library. This can not be undone. Exported files stay.",
+    "confirm_many": "{count} comics are deleted from the library. This can not be undone. Exported files stay.",
+    "deleted": "{count} deleted",
+    "failed": "Could not delete \"{title}\""
+  },
   "comic_pane": {
     "name": "Comic",
     "other_language": "Other Languages",

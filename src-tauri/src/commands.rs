@@ -77,6 +77,13 @@ pub fn export_cbz(context: State<Context>, comic: Comic) -> CommandResult<()> {
     api::export_cbz(&context, comic)
 }
 
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command(async)]
+#[specta::specta]
+pub fn delete_comic(context: State<Context>, comic: Comic) -> CommandResult<()> {
+    api::delete_comic(&context, comic)
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub async fn download_comics_by_ids(
