@@ -2,7 +2,7 @@
 # Start hitomi-server as the user PUID:PGID, with the umask UMASK
 #
 # The files the server writes belong to PUID:PGID and are readable by whom UMASK allows, so a
-# library on a NAS share gets an owner and rights that Kavita can work with.
+# library on a NAS share gets an owner and rights that other programs can work with.
 #
 # Only the config directory is handed to that user. The library and the export directory are
 # never touched here: a recursive chown of a big library takes long, and it fails on an NFS

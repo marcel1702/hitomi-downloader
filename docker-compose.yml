@@ -1,12 +1,11 @@
-# hitomi-downloader (the web version) next to Kavita
+# hitomi-downloader (the web version)
 #
 #   cp .env.example .env      then fill in .env
 #   docker compose up -d
 #
 # Every path is a placeholder you set in .env, none of them is a given. The library is only a
 # directory for the containers: a folder on the Docker host, a named volume, or a folder that
-# is itself an NFS or SMB share mounted on the host. It can be mounted under another name in
-# each container, what Kavita calls it has nothing to do with what hitomi-downloader calls it.
+# is itself an NFS or SMB share mounted on the host.
 
 services:
   hitomi-downloader:
@@ -41,7 +40,7 @@ services:
     volumes:
       # config.json, the logins, the logs and the pages of running downloads
       - hitomi-config:/config
-      # The library, where Kavita finds the comics. The long form with create_host_path: false
+      # The library, where the comics are. The long form with create_host_path: false
       # makes the container refuse to start if the source is missing, for example because an NFS
       # share is not mounted. With the short form Docker would make an empty folder on the host
       # and the downloads would go to its local disk without anyone noticing.
@@ -50,30 +49,9 @@ services:
         target: /library
         bind:
           create_host_path: false
-      # The exports, which must not lie inside the library (Kavita would list them a second time)
+      # The exports, which must not lie inside the library (a scan of it would list them a second time)
       - hitomi-export:/data/export
-
-  # Optional, a Kavita that reads the library. In its library settings set the file type to
-  # "Archive" only.
-  kavita:
-    image: jvmilazz0/kavita:latest
-    container_name: kavita
-    restart: unless-stopped
-    profiles: ["kavita"]
-    ports:
-      - "5000:5000"
-    environment:
-      TZ: ${TZ:-UTC}
-    volumes:
-      - kavita-config:/kavita/config
-      # The same folder as above. Under this name you add it in Kavita, call it what you like.
-      - type: bind
-        source: ${LIBRARY_PATH:?set LIBRARY_PATH in .env}
-        target: /library
-        bind:
-          create_host_path: false
 
 volumes:
   hitomi-config:
   hitomi-export:
-  kavita-config:

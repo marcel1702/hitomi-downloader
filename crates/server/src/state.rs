@@ -62,7 +62,7 @@ impl PinnedDirs {
 
     /// Create both directories, and refuse a setup in which an export would land in the library
     ///
-    /// Kavita scans the library, so a comic exported into it would show up a second time.
+    /// The library gets scanned, so a comic exported into it would show up a second time.
     /// This looks at the directories in use, not at the environment variables, so it also
     /// holds when none of them is set.
     pub fn check(&self) -> anyhow::Result<()> {
@@ -75,7 +75,7 @@ impl PinnedDirs {
         let export = self.export_dir.canonicalize()?;
         if export == library {
             anyhow::bail!(
-                "The export directory is the library directory (`{}`). Exports would show up in Kavita a second time, give them a directory of their own with HITOMI_EXPORT_DIR",
+                "The export directory is the library directory (`{}`). Exports would show up in the library a second time, give them a directory of their own with HITOMI_EXPORT_DIR",
                 library.display()
             );
         }
@@ -87,7 +87,7 @@ impl PinnedDirs {
                 }
             }
             anyhow::bail!(
-                "The export directory `{}` lies inside the library directory `{}`. Exports would show up in Kavita a second time, give them a directory of their own with HITOMI_EXPORT_DIR",
+                "The export directory `{}` lies inside the library directory `{}`. Exports would show up in the library a second time, give them a directory of their own with HITOMI_EXPORT_DIR",
                 export.display(),
                 library.display()
             );
@@ -99,7 +99,7 @@ impl PinnedDirs {
 /// Create the directory the pages of running downloads are kept in, and check that it is usable
 ///
 /// It has to be writable, and it must not lie inside `library`: the point of keeping the
-/// pages elsewhere is that a scan of the library, by Kavita for example, never finds them.
+/// pages elsewhere is that a scan of the library never finds them.
 pub fn check_temp_dir(temp_dir: &std::path::Path, library: &std::path::Path) -> anyhow::Result<()> {
     let existed = temp_dir.exists();
     std::fs::create_dir_all(temp_dir).map_err(|err| {
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn a_library_inside_the_export_dir_is_fine() {
-        // Kavita never sees the exports there, they land next to the library
+        // a scan of the library never sees the exports there, they land next to the library
         let (root, pinned) = temp_dirs("exports/library", "exports");
         pinned.check().unwrap();
         std::fs::remove_dir_all(root).unwrap();
