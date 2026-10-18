@@ -150,3 +150,21 @@ test('the repository itself is in a shape the script understands, and agrees wit
     rmSync(root, { recursive: true })
   }
 })
+
+test('files checked out with Windows line endings work too, and keep them', () => {
+  const root = copyOfRepository()
+  try {
+    for (const file of FILES) {
+      writeFileSync(join(root, file), read(root, file).replace(/\r?\n/g, '\r\n'))
+    }
+    setVersion(root, 'v7.8.9')
+    for (const file of FILES) {
+      const changed = read(root, file)
+      assert.ok(changed.includes('7.8.9'), `${file} was not changed`)
+      assert.equal(changed.replace(/\r\n/g, ''), changed.replace(/\r?\n/g, '').replace(/\r/g, ''), `${file} lost its line endings`)
+      assert.ok(!/[^\r]\n/.test(changed), `${file} has a bare line feed`)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
