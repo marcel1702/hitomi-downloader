@@ -11,7 +11,10 @@
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -151,8 +154,20 @@ struct Subscription {
     matches: usize,
     #[serde(default)]
     last_error: Option<String>,
-    /// The ids this subscription has dealt with, sorted: queued by it, in the library, or
-    /// there when it was made to follow from now on
+    /// Every gallery up to this id counts as dealt with: what matched when it was made to
+    /// follow from now on
+    ///
+    /// Hitomi numbers its galleries in the order they are added, so one number stands for
+    /// all of them, a search with ten thousand matches would store ten thousand ids
+    /// otherwise. A gallery that is that old and only matches later, a tag added to it,
+    /// counts as old: it is not new on Hitomi.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    handled_up_to: Option<i32>,
+    /// The ids above `handled_up_to` this subscription has dealt with, sorted: queued by it,
+    /// or found in the library or the queue
+    ///
+    /// They have to be remembered, a comic that was deleted from the library must not be
+    /// queued again. So the list grows with what the subscription downloads, and no faster.
     #[serde(default)]
     handled: Vec<i32>,
 }
@@ -257,6 +272,8 @@ pub struct Subscriptions {
     checking: Mutex<HashSet<String>>,
     /// One check at a time, whoever asks, so that Hitomi sees one client doing one thing
     turn: tokio::sync::Mutex<()>,
+    /// Whether [`Subscriptions::check_all`] runs
+    checking_all: AtomicBool,
 }
 
 /// The current time as seconds since 1970
@@ -303,6 +320,15 @@ impl Drop for CheckingFlag<'_> {
     }
 }
 
+/// Sets the flag back when it is dropped, also when the future that holds it is
+struct RunningFlag<'a>(&'a AtomicBool);
+
+impl Drop for RunningFlag<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 impl Subscriptions {
     /// The subscriptions stored in `path`, none if there is no file
     pub fn open(
@@ -320,6 +346,7 @@ impl Subscriptions {
             subscriptions: Mutex::new(subscriptions),
             checking: Mutex::new(HashSet::new()),
             turn: tokio::sync::Mutex::new(()),
+            checking_all: AtomicBool::new(false),
         })
     }
 
@@ -430,13 +457,8 @@ impl Subscriptions {
             .await
             .map_err(SubscriptionError::Search)?;
 
-        let (handled, last_check_at) = match first_run {
-            FirstRun::FromNow => {
-                let mut handled = ids.clone();
-                handled.sort_unstable();
-                handled.dedup();
-                (handled, Some(now))
-            }
+        let (handled_up_to, last_check_at) = match first_run {
+            FirstRun::FromNow => (ids.iter().max().copied(), Some(now)),
             FirstRun::Everything => {
                 let library = self.library_ids().await;
                 let count = count_new(&ids, &library);
@@ -446,7 +468,7 @@ impl Subscriptions {
                         limit: MAX_DOWNLOAD_EVERYTHING,
                     });
                 }
-                (Vec::new(), None)
+                (None, None)
             }
         };
         let subscription = Subscription {
@@ -458,7 +480,8 @@ impl Subscriptions {
             last_new: 0,
             matches: ids.len(),
             last_error: None,
-            handled,
+            handled_up_to,
+            handled: Vec::new(),
         };
         let view = {
             let mut subscriptions = self.subscriptions.lock();
@@ -585,7 +608,8 @@ impl Subscriptions {
         };
         // the oldest first, which is the order a series is read in
         for id in ids.into_iter().rev() {
-            if handled.contains(&id) {
+            if subscription.handled_up_to.is_some_and(|up_to| id <= up_to) || handled.contains(&id)
+            {
                 continue;
             }
             // in the library, or about to be: another subscription may have queued it
@@ -664,8 +688,16 @@ impl Subscriptions {
     }
 
     /// Check every subscription that is not paused, as `run_due` does
-    pub async fn check_all(&self, now: impl Fn() -> i64, pause: Duration) {
+    ///
+    /// Not while it runs already: the second run would wait behind the first, and go through
+    /// all of them once more right after it. `false` when it did not run for that reason.
+    pub async fn check_all(&self, now: impl Fn() -> i64, pause: Duration) -> bool {
+        if self.checking_all.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        let _running = RunningFlag(&self.checking_all);
         self.check_in_turn(self.active_ids(), now, pause).await;
+        true
     }
 
     async fn check_in_turn(&self, ids: Vec<String>, now: impl Fn() -> i64, pause: Duration) {
@@ -766,6 +798,7 @@ mod tests {
         delay: Duration,
         running: AtomicUsize,
         most_running: AtomicUsize,
+        calls: AtomicUsize,
     }
 
     impl FakeSearch {
@@ -785,6 +818,7 @@ mod tests {
     impl SearchSource for FakeSearch {
         fn ids<'a>(&'a self, query: &'a str) -> BoxFuture<'a, anyhow::Result<Vec<i32>>> {
             Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
                 let running = self.running.fetch_add(1, Ordering::SeqCst) + 1;
                 self.most_running.fetch_max(running, Ordering::SeqCst);
                 tokio::time::sleep(self.delay).await;
@@ -1277,6 +1311,90 @@ mod tests {
             .check_all(|| T0 + HOUR, Duration::ZERO)
             .await;
         assert_eq!(fixture.queued(), [10]);
+    }
+
+    #[tokio::test]
+    async fn check_all_does_not_start_while_it_runs() {
+        let fixture = Fixture::with(None, Duration::from_millis(100));
+        for query in ["a", "b"] {
+            fixture.search.set(query, &[1]);
+            fixture
+                .subscriptions
+                .create(query, FirstRun::FromNow, T0)
+                .await
+                .unwrap();
+        }
+        fixture.search.calls.store(0, Ordering::SeqCst);
+        let subscriptions = fixture.subscriptions.clone();
+        let runs = (0..5).map(|_| subscriptions.check_all(|| T0 + HOUR, Duration::ZERO));
+        let started = futures::future::join_all(runs).await;
+        assert_eq!(started.iter().filter(|started| **started).count(), 1);
+        // one search for each subscription, and no second round
+        assert_eq!(fixture.search.calls.load(Ordering::SeqCst), 2);
+
+        // once it is over, it can run again
+        assert!(
+            fixture
+                .subscriptions
+                .check_all(|| T0 + 2 * HOUR, Duration::ZERO)
+                .await
+        );
+        assert_eq!(fixture.search.calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn following_a_big_search_from_now_on_stores_one_number_and_not_its_matches() {
+        let fixture = Fixture::new();
+        let matches: Vec<i32> = (1..=10_000).rev().collect();
+        fixture.search.set("language:english", &matches);
+        let view = fixture
+            .subscriptions
+            .create("language:english", FirstRun::FromNow, T0)
+            .await
+            .unwrap();
+        let stored = std::fs::read_to_string(fixture.dir.join("subscriptions.json")).unwrap();
+        assert!(stored.len() < 1000, "{} bytes", stored.len());
+        let stored: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        let subscription = &stored["subscriptions"][0];
+        assert_eq!(subscription["handledUpTo"], 10_000);
+        assert_eq!(subscription["handled"], serde_json::json!([]));
+
+        // none of them is new, but the next one is
+        let mut with_new = matches.clone();
+        with_new.insert(0, 10_001);
+        fixture.search.set("language:english", &with_new);
+        fixture
+            .subscriptions
+            .check(&view.id, T0 + HOUR)
+            .await
+            .unwrap();
+        assert_eq!(fixture.queued(), [10_001]);
+
+        // it arrived and was deleted again, it is not queued a second time, after a restart
+        // neither: the list holds what the subscription downloaded, and nothing else
+        let reopened = fixture.reopen();
+        reopened.check(&view.id, T0 + 2 * HOUR).await.unwrap();
+        assert_eq!(fixture.queued(), [10_001]);
+        let stored = std::fs::read_to_string(fixture.dir.join("subscriptions.json")).unwrap();
+        let stored: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(
+            stored["subscriptions"][0]["handled"],
+            serde_json::json!([10_001])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_with_the_old_list_still_counts_its_ids_as_dealt_with() {
+        let fixture = Fixture::new();
+        std::fs::write(
+            fixture.dir.join("subscriptions.json"),
+            r#"{"version":1,"subscriptions":[{"id":"old","query":"a","createdAt":1,"handled":[1,2,3]}]}"#,
+        )
+        .unwrap();
+        let subscriptions = fixture.reopen();
+        fixture.search.set("a", &[4, 3, 2, 1]);
+        subscriptions.check("old", T0).await.unwrap();
+        assert_eq!(fixture.queued(), [4]);
     }
 
     #[tokio::test]
