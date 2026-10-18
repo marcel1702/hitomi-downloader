@@ -152,6 +152,53 @@ pub fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<
     Ok(())
 }
 
+/// A file that is written whole by [`write_atomically`], by one writer at a time
+///
+/// What is written is worked out while the lock is held, so the last write holds the newest
+/// state: two writers that took their state first could land in the other order, and an older
+/// state would stay on the disk. And all writes of a file share its temporary file, two at
+/// once would write into each other and the second rename would fail.
+pub struct AtomicFile {
+    path: std::path::PathBuf,
+    lock: parking_lot::Mutex<()>,
+}
+
+impl AtomicFile {
+    pub fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            lock: parking_lot::Mutex::new(()),
+        }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// Write what `contents` returns, which it is asked for once the other writes are done
+    pub fn write(&self, contents: impl FnOnce() -> anyhow::Result<Vec<u8>>) -> anyhow::Result<()> {
+        let _lock = self.lock.lock();
+        write_atomically(&self.path, &contents()?)
+    }
+}
+
+/// Run `save` on a thread that may block, and log it when it fails, or panics
+///
+/// The file can be megabytes, which must not block the async runtime. The log is written
+/// here and not in `save`, so that a panic of it is logged as well.
+pub async fn save_blocking(
+    what: &'static str,
+    save: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+) {
+    use crate::extensions::AnyhowErrorToStringChain as _;
+
+    match tokio::task::spawn_blocking(save).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => tracing::error!(message = err.to_string_chain(), "Failed to save {what}"),
+        Err(err) => tracing::error!("Failed to save {what}: {err}"),
+    }
+}
+
 /// Move a file that can not be used to `<name>.corrupt`, so that a new one can be written
 /// and what was in it can still be looked at
 pub fn set_aside(path: &std::path::Path, what: &str, reason: &str) {
@@ -283,5 +330,115 @@ mod tests {
         );
         assert_eq!(filename_filter("trailing dots..."), "trailing dots");
         assert_eq!(filename_filter("  padded  "), "padded");
+    }
+
+    #[test]
+    fn parallel_writes_of_a_file_leave_it_whole_and_at_the_last_state() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        const WRITERS: usize = 16;
+        const WRITES: usize = 25;
+        let dir = std::env::temp_dir().join(format!("hitomi-atomic-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = Arc::new(AtomicFile::new(dir.join("state.json")));
+        file.write(|| Ok(b"0".to_vec())).unwrap();
+        // the state the writers save, it only ever grows
+        let state = Arc::new(AtomicUsize::new(0));
+        let done = Arc::new(AtomicBool::new(false));
+
+        let reader = {
+            let (path, done) = (file.path().to_path_buf(), done.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !done.load(Ordering::SeqCst) {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let value: usize = serde_json::from_str(&text)
+                        .unwrap_or_else(|err| panic!("`{text}` is not a written state: {err}"));
+                    assert!(value <= WRITERS * WRITES);
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        let writers: Vec<_> = (0..WRITERS)
+            .map(|_| {
+                let (file, state) = (file.clone(), state.clone());
+                std::thread::spawn(move || {
+                    for _ in 0..WRITES {
+                        file.write(|| {
+                            let value = state.fetch_add(1, Ordering::SeqCst) + 1;
+                            // a large state takes a while, other writers would overtake it
+                            std::thread::sleep(std::time::Duration::from_micros(200));
+                            Ok(serde_json::to_vec(&value)?)
+                        })
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        done.store(true, Ordering::SeqCst);
+        assert!(reader.join().unwrap() > 0);
+
+        let last: usize =
+            serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+        assert_eq!(last, WRITERS * WRITES);
+        assert!(!dir.join("state.json.tmp").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// What is logged while `run` runs on this thread
+    async fn logs_of(run: impl std::future::Future<Output = ()>) -> String {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Buffer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Buffer::default();
+        let writer = buffer.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        run.await;
+        drop(guard);
+        let bytes = buffer.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_failed_save_in_the_background_is_logged() {
+        let logs = logs_of(save_blocking("the test file", || {
+            Err(anyhow::anyhow!("the disk is full"))
+        }))
+        .await;
+        assert!(logs.contains("Failed to save the test file"), "{logs}");
+        assert!(logs.contains("the disk is full"), "{logs}");
+    }
+
+    #[tokio::test]
+    async fn a_save_that_panics_in_the_background_is_logged() {
+        let logs = logs_of(save_blocking("the test file", || panic!("a bug"))).await;
+        assert!(logs.contains("Failed to save the test file"), "{logs}");
+        assert!(logs.contains("panicked"), "{logs}");
+    }
+
+    #[tokio::test]
+    async fn a_save_that_works_logs_nothing() {
+        let logs = logs_of(save_blocking("the test file", || Ok(()))).await;
+        assert_eq!(logs, "");
     }
 }
