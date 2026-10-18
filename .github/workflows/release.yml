@@ -41,6 +41,21 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # The tag is the only place a version is written. It goes into the files before anything
+      # is built, so the About dialogs, `/api/health` and the ComicInfo.xml of the downloads
+      # all say what the installers are called. A tag that is not a version stops the job here.
+      - name: Set the version from the tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node .github/scripts/set-version.mjs "$TAG"
+
+      - name: Keep the version of the repository
+        if: github.ref_type != 'tag'
+        shell: bash
+        run: echo "Not a tag, so the version in the repository is built (a manual run)"
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
@@ -94,5 +109,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: 'hitomi-downloader ${{ github.ref_name }}'
           draft: true
-          prerelease: false
+          # a tag with a pre-release such as v1.2.3-rc.1 is published as a pre-release
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: release-assets/*
