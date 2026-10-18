@@ -1055,7 +1055,7 @@ impl Comic {
             id: self.id,
             // Shortened here rather than only when the whole directory name is clamped,
             // so that what follows the title in the format string survives. With the
-            // default format that is the id, which is what tells two comics apart.
+            // default format that is the language, with a format that has it the id.
             title: crate::utils::truncate_title(&self.title),
             language: self.language.clone(),
             language_localname: self.language_localname.clone(),
@@ -1378,6 +1378,24 @@ mod tests {
             .unwrap();
             (context, root)
         })
+    }
+
+    #[test]
+    fn the_default_folder_format_names_artists_title_and_language() {
+        let (context, _) = test_context();
+        let mut comic = Comic {
+            id: 7,
+            title: "A Title".to_string(),
+            language: "english".to_string(),
+            artists: vec!["one".to_string(), "two".to_string()],
+            ..Comic::default()
+        };
+        comic.update_dir_name_fields_by_fmt(context).unwrap();
+        let dir = comic.comic_download_dir.unwrap();
+        assert_eq!(
+            dir.file_name().unwrap().to_str().unwrap(),
+            "[one, two] A Title - english"
+        );
     }
 
     /// A task for the comic `id` whose archive goes to `library/<name>`

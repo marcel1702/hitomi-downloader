@@ -142,6 +142,11 @@ only has its own tag. `docker compose pull && docker compose up -d` updates. To 
     └── cover.webp                           thumbnail for the library view
 ```
 
+The folder format is set in the settings. The default is `[{artists}] {title} - {language}`, which
+gives `[mameroku] Soushi Souai. - german`. It has no `{id}`, so two galleries with the same artists,
+title and language would share one folder: add `{id}` to the format if that can happen to you. A
+format you saved earlier is kept.
+
 Downloads made by older versions, which stored loose images, keep working: the reader and
 both exports fall back to the folder when no archive is present.
 

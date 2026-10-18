@@ -135,7 +135,7 @@ impl Config {
             export_dir: app_data_dir.join("export"),
             enable_file_logger: true,
             download_format: DownloadFormat::Webp,
-            dir_fmt: "{title} - {id}".to_string(),
+            dir_fmt: "[{artists}] {title} - {language}".to_string(),
             proxy: ProxyConfig::default(),
             comic_concurrency: 2,
             img_concurrency: 4,
@@ -167,6 +167,10 @@ mod tests {
         assert_eq!(config.dir_fmt, "{id}");
         assert_eq!(config.language, "de-DE");
         assert_eq!(config.proxy, ProxyConfig::default());
+        // a key the old config does not have is filled in from the defaults
+        let without_format =
+            Config::merge_config(r#"{ "language": "de-DE" }"#, Path::new("/app-data"));
+        assert_eq!(without_format.dir_fmt, "[{artists}] {title} - {language}");
 
         let saved = serde_json::to_value(&config).unwrap();
         assert!(saved.get("proxyMode").is_none());
