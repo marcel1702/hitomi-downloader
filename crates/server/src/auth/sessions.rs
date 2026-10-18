@@ -88,15 +88,33 @@ impl Sessions {
 
     /// Write the sessions to a temporary file and move it over the old one, readable by the
     /// owner only
+    ///
+    /// The file is created that way, set afterwards it would be readable by everyone for a
+    /// moment. A file left from before is removed first: opening it would keep its mode.
     fn save(&self, sessions: &HashMap<String, StoredSession>) -> anyhow::Result<()> {
+        use std::io::Write as _;
+
         let temp = self.file.with_extension("json.tmp");
-        std::fs::write(&temp, serde_json::to_vec_pretty(sessions)?)
-            .with_context(|| format!("Failed to write `{}`", temp.display()))?;
+        match std::fs::remove_file(&temp) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+                return Err(err).context(format!("Failed to remove `{}`", temp.display()));
+            }
+            _ => {}
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))?;
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
         }
+        options
+            .open(&temp)
+            .and_then(|mut out| {
+                out.write_all(&serde_json::to_vec_pretty(sessions)?)?;
+                out.sync_all()
+            })
+            .with_context(|| format!("Failed to write `{}`", temp.display()))?;
         std::fs::rename(&temp, &self.file)
             .with_context(|| format!("Failed to write `{}`", self.file.display()))?;
         Ok(())
@@ -163,6 +181,56 @@ mod tests {
             let mode = std::fs::metadata(&file).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+        std::fs::remove_file(file).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_session_file_is_never_readable_by_others() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let file = file();
+        let temp = file.with_extension("json.tmp");
+        // left from an older version, readable by everyone
+        std::fs::write(&temp, b"{}").unwrap();
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let done = Arc::new(AtomicBool::new(false));
+        let watcher = {
+            let (file, temp, done) = (file.clone(), temp.clone(), done.clone());
+            std::thread::spawn(move || {
+                let mut modes = Vec::new();
+                while !done.load(Ordering::SeqCst) {
+                    for path in [&file, &temp] {
+                        if let Ok(metadata) = std::fs::metadata(path) {
+                            modes.push(metadata.permissions().mode() & 0o777);
+                        }
+                    }
+                }
+                modes
+            })
+        };
+        let sessions = Sessions::load(file.clone(), DAY).unwrap();
+        for _ in 0..200 {
+            sessions.start(identity()).unwrap();
+        }
+        done.store(true, Ordering::SeqCst);
+        let modes = watcher.join().unwrap();
+
+        // the leftover was seen before the first save, every file after it is the owner's
+        let after_leftover: Vec<_> = modes.iter().skip_while(|mode| **mode == 0o644).collect();
+        assert!(!after_leftover.is_empty());
+        assert!(
+            after_leftover.iter().all(|mode| **mode == 0o600),
+            "{:?}",
+            modes
+                .iter()
+                .filter(|mode| **mode != 0o600)
+                .collect::<Vec<_>>()
+        );
+        assert!(!temp.exists());
         std::fs::remove_file(file).unwrap();
     }
 

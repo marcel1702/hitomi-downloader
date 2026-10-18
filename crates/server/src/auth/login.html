@@ -128,9 +128,18 @@
       const t = texts[lang]
       document.documentElement.lang = lang
 
-      // only a path on this server, never `//host` or `/\host`, which a browser reads as another site
-      const requested = new URLSearchParams(location.search).get('next')
-      const next = requested && /^\/(?![/\\])/.test(requested) ? requested : '/'
+      // only a page of this server: resolved as the browser will, which drops a tab or a line
+      // break and reads `\` as `/`, so `/%09/host` or `/\host` would lead to another site
+      function localTarget(requested) {
+        if (!requested) return '/'
+        try {
+          const target = new URL(requested, location.origin)
+          return target.origin === location.origin ? target.pathname + target.search + target.hash : '/'
+        } catch {
+          return '/'
+        }
+      }
+      const next = localTarget(new URLSearchParams(location.search).get('next'))
 
       const methods = document.getElementById('methods')
       const error = document.getElementById('error')

@@ -80,7 +80,7 @@ async fn login(
     Args(credentials): Args<Credentials>,
 ) -> Response {
     let client = client_ip(peer, &headers, auth.trust_forwarded_for());
-    if let Err(remaining) = method.throttle.check(client, Instant::now()) {
+    if let Err(remaining) = method.throttle.begin(client, Instant::now()) {
         // rounded up, a client that comes back on time must not be turned away again
         let seconds = u64::try_from(remaining.as_millis().div_ceil(1000)).unwrap_or(u64::MAX);
         let minutes = seconds.div_ceil(60);
@@ -123,7 +123,7 @@ async fn login(
         user: username,
         method: METHOD.to_string(),
     };
-    match auth.start_session(&identity) {
+    match auth.start_session(&identity, &headers) {
         Ok(cookie) => ([(header::SET_COOKIE, cookie)], Json(identity)).into_response(),
         Err(err) => ApiError::with_status(StatusCode::INTERNAL_SERVER_ERROR, "login failed", err)
             .into_response(),

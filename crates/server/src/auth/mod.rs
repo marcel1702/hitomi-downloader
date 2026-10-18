@@ -17,7 +17,7 @@ use std::{
 
 use anyhow::bail;
 use axum::{
-    extract::{Request, State},
+    extract::{Query, Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
     response::{Html, IntoResponse, Redirect, Response},
@@ -107,7 +107,7 @@ pub struct Auth {
 struct AuthInner {
     sessions: Sessions,
     methods: Vec<Arc<dyn AuthMethod>>,
-    /// Whether the cookie may only travel over https
+    /// Whether the cookie may only ever travel over https, see [`Auth::secure_cookie`]
     secure_cookie: bool,
     trust_forwarded_for: bool,
 }
@@ -186,10 +186,16 @@ impl Auth {
     }
 
     /// Start a session for `identity`, returning the `Set-Cookie` value that carries it
-    pub fn start_session(&self, identity: &Identity) -> anyhow::Result<HeaderValue> {
+    ///
+    /// `headers` are those of the request that logged in, see [`Auth::secure_cookie`].
+    pub fn start_session(
+        &self,
+        identity: &Identity,
+        headers: &HeaderMap,
+    ) -> anyhow::Result<HeaderValue> {
         let token = self.inner.sessions.start(identity.clone())?;
         tracing::info!(user = identity.user, method = identity.method, "Logged in");
-        Ok(self.cookie(&token, self.inner.sessions.lifetime().as_secs()))
+        Ok(self.cookie(&token, self.inner.sessions.lifetime().as_secs(), headers))
     }
 
     /// Who the request belongs to, if it carries a valid session
@@ -197,11 +203,21 @@ impl Auth {
         session_token(headers).and_then(|token| self.inner.sessions.get(token))
     }
 
-    fn cookie(&self, value: &str, max_age_secs: u64) -> HeaderValue {
+    /// Whether the cookie of a response to a request with `headers` may only travel over
+    /// https
+    ///
+    /// Always with an https `HITOMI_PUBLIC_URL`. Without it, when the reverse proxy is
+    /// trusted and says that it was reached over https: the cookie of a login over https
+    /// must not be sent over plain http afterwards.
+    fn secure_cookie(&self, headers: &HeaderMap) -> bool {
+        self.inner.secure_cookie || (self.inner.trust_forwarded_for && forwarded_https(headers))
+    }
+
+    fn cookie(&self, value: &str, max_age_secs: u64, headers: &HeaderMap) -> HeaderValue {
         // `Lax` and not `Strict`: an identity provider sends the browser back from another
         // site, and `Strict` would leave the cookie off the first page after that. Every
         // request that changes something is a JSON `POST`, which `Lax` keeps from other sites.
-        let secure = if self.inner.secure_cookie {
+        let secure = if self.secure_cookie(headers) {
             "; Secure"
         } else {
             ""
@@ -245,6 +261,15 @@ fn session_token(headers: &HeaderMap) -> Option<&str> {
         })
 }
 
+/// Whether `X-Forwarded-Proto` says https, by its last value as with `X-Forwarded-For`
+fn forwarded_https(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.rsplit(',').next())
+        .is_some_and(|last| last.trim().eq_ignore_ascii_case("https"))
+}
+
 /// The address of the client, from `X-Forwarded-For` only if the server is told to trust it
 ///
 /// The last address in the header is the one the reverse proxy in front of the server saw,
@@ -263,9 +288,27 @@ pub fn client_ip(peer: SocketAddr, headers: &HeaderMap, trust_forwarded_for: boo
     peer.ip()
 }
 
-async fn login_page(State(auth): State<Auth>, headers: HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct LoginQuery {
+    next: Option<String>,
+}
+
+async fn login_page(
+    State(auth): State<Auth>,
+    Query(query): Query<LoginQuery>,
+    headers: HeaderMap,
+) -> Response {
     if auth.identity(&headers).is_some() {
         return Redirect::to("/").into_response();
+    }
+    if query
+        .next
+        .as_deref()
+        .is_some_and(|next| !is_local_target(next))
+    {
+        // the page checks it as well, this keeps a link that points elsewhere from working
+        // in a browser whose page differs from it
+        return Redirect::to("/auth/login").into_response();
     }
     (
         [
@@ -284,7 +327,11 @@ async fn logout(State(auth): State<Auth>, headers: HeaderMap) -> Response {
                 .into_response();
         }
     }
-    ([(header::SET_COOKIE, auth.cookie("", 0))], Json(())).into_response()
+    (
+        [(header::SET_COOKIE, auth.cookie("", 0, &headers))],
+        Json(()),
+    )
+        .into_response()
 }
 
 async fn session(State(auth): State<Auth>, headers: HeaderMap) -> Response {
@@ -330,6 +377,16 @@ pub async fn require_session(
             Redirect::to(&format!("/auth/login?next={}", percent_encode(target))).into_response()
         }
     }
+}
+
+/// Whether a browser that resolves `next` on this server stays on it
+///
+/// Resolved the way a browser does it, by the WHATWG URL rules: a tab or a line break is
+/// dropped, a `\` is a `/`, so `/\t/evil.com` is `//evil.com`, which is another server.
+fn is_local_target(next: &str) -> bool {
+    let base = url::Url::parse("http://server.invalid/").expect("a valid URL");
+    base.join(next)
+        .is_ok_and(|target| target.origin() == base.origin())
 }
 
 fn is_api(path: &str) -> bool {
@@ -415,6 +472,41 @@ mod tests {
             client_ip(peer, &HeaderMap::new(), true),
             "10.0.0.2".parse::<IpAddr>().unwrap()
         );
+    }
+
+    #[test]
+    fn only_a_target_on_this_server_is_local() {
+        for next in ["/", "/reader?id=1", "/a/b#c", "reader"] {
+            assert!(is_local_target(next), "{next:?}");
+        }
+        for next in [
+            "/\t/evil.com",
+            "/\n/evil.com",
+            "/\r\n/evil.com",
+            "\t//evil.com",
+            "//evil.com",
+            "/\\evil.com",
+            "\\\\evil.com",
+            "https://evil.com",
+            "http://server.invalid:8080/",
+            "javascript:alert(1)",
+        ] {
+            assert!(!is_local_target(next), "{next:?}");
+        }
+    }
+
+    #[test]
+    fn forwarded_proto_counts_by_its_last_value() {
+        assert!(forwarded_https(&headers(&[("x-forwarded-proto", "https")])));
+        assert!(forwarded_https(&headers(&[(
+            "x-forwarded-proto",
+            "http, HTTPS"
+        )])));
+        assert!(!forwarded_https(&headers(&[(
+            "x-forwarded-proto",
+            "https, http"
+        )])));
+        assert!(!forwarded_https(&HeaderMap::new()));
     }
 
     #[test]
