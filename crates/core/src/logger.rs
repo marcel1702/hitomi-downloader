@@ -153,16 +153,24 @@ where
     Ok((Box::new(file_layer), Some(guard)))
 }
 
+/// Hand an event of the file watcher to the task that reads them, `false` if that has ended
+///
+/// It has ended when the process shuts down, and the thread of `notify` may still deliver an
+/// event then. There is nobody left to tell, and an error written here would go to the very
+/// file that is watched, and cause the next event.
+fn forward_watch_event(
+    sender: &tokio::sync::mpsc::Sender<notify::Result<notify::Event>>,
+    event: notify::Result<notify::Event>,
+) -> bool {
+    sender.blocking_send(event).is_ok()
+}
+
 async fn file_log_watcher(context: Context) {
     let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
 
     // notify calls this on a thread of its own, outside the async runtime
     let event_handler = move |res| {
-        if let Err(err) = sender.blocking_send(res).map_err(anyhow::Error::from) {
-            let err_title = "Failed to send log file watcher event";
-            let string_chain = err.to_string_chain();
-            tracing::error!(err_title, message = string_chain);
-        }
+        forward_watch_event(&sender, res);
     };
 
     let mut watcher = match RecommendedWatcher::new(event_handler, notify::Config::default())
@@ -206,5 +214,29 @@ async fn file_log_watcher(context: Context) {
                 tracing::error!(err_title, message = string_chain);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event() -> notify::Result<notify::Event> {
+        Ok(notify::Event::new(notify::EventKind::Any))
+    }
+
+    #[test]
+    fn an_event_goes_to_the_task_that_reads_them() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        assert!(forward_watch_event(&sender, event()));
+        assert!(receiver.try_recv().is_ok());
+    }
+
+    #[test]
+    fn an_event_after_the_task_has_ended_is_dropped_without_a_word() {
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        drop(receiver);
+        // no panic, and nothing is logged: it only says that nobody took it
+        assert!(!forward_watch_event(&sender, event()));
     }
 }
