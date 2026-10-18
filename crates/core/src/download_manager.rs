@@ -437,10 +437,18 @@ impl DownloadTask {
         state_receiver.mark_changed();
         let mut permit = None;
         loop {
-            let state_is_downloading = *state_receiver.borrow() == DownloadTaskState::Downloading;
-            let state_is_pending = *state_receiver.borrow() == DownloadTaskState::Pending;
+            let state = *state_receiver.borrow();
+            let state_is_downloading = state == DownloadTaskState::Downloading;
+            let state_is_pending = state == DownloadTaskState::Pending;
+            // The download sets its end state itself, and may have something left to do after
+            // that. It has to be polled until it is done: it holds the place of this download,
+            // which is only given back when this function ends.
+            let state_is_ending = matches!(
+                state,
+                DownloadTaskState::Completed | DownloadTaskState::Failed
+            );
             tokio::select! {
-                () = &mut download_comic_task, if state_is_downloading && permit.is_some() => break,
+                () = &mut download_comic_task, if (state_is_downloading || state_is_ending) && permit.is_some() => break,
                 control_flow = self.acquire_comic_permit(&mut permit), if state_is_pending => {
                     match control_flow {
                         ControlFlow::Continue(()) => continue,
@@ -572,11 +580,10 @@ impl DownloadTask {
 
         self.set_state(DownloadTaskState::Completed);
         self.emit_download_task_update_event();
-        // not after the delay of the writer: a restart in between would download it again
+        // Not after the delay of the writer: a restart in between would download it again.
+        // And not waited for: nothing may wait here once the state is `Completed`, see `process`.
         let manager = self.download_manager.clone();
-        if let Err(err) = tokio::task::spawn_blocking(move || manager.save_queue_now()).await {
-            tracing::error!("Failed to save the download queue: {err}");
-        }
+        tokio::task::spawn_blocking(move || manager.save_queue_now());
     }
 
     fn create_temp_download_dir(&self) -> Option<PathBuf> {
@@ -1737,6 +1744,50 @@ mod tests {
 
         manager.cancel_download_task(730_001).unwrap();
         assert!(wait_for(vec![730_002]), "{:?}", ids_in_file());
+    }
+
+    /// A comic without pages downloads without a network: it is packed, and that is all
+    fn pageless_comic(id: i32) -> Comic {
+        Comic {
+            id,
+            title: format!("Pageless {id}"),
+            ..Comic::default()
+        }
+    }
+
+    #[test]
+    fn finished_downloads_give_their_place_back() {
+        let (context, _) = test_context();
+        let manager = context.download_manager();
+        // more downloads than places, one after the other: if a finished download kept its
+        // place, the ones that come after the first few would wait on `Pending` for ever
+        let places = manager.comic_limit.load(Ordering::Relaxed);
+        let ids: Vec<i32> = (0..=places as i32 + 2).map(|n| 750_000 + n).collect();
+        for id in &ids {
+            manager.create_download_task(pageless_comic(*id)).unwrap();
+        }
+        let wait_for_end = || {
+            for _ in 0..200 {
+                let states: Vec<_> = ids.iter().map(|id| state_of(manager, *id)).collect();
+                if states
+                    .iter()
+                    .all(|state| *state == Some(DownloadTaskState::Completed))
+                {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            false
+        };
+        assert!(
+            wait_for_end(),
+            "not all downloads completed: {:?}",
+            ids.iter()
+                .map(|id| state_of(manager, *id))
+                .collect::<Vec<_>>()
+        );
+        // and every place is free again
+        assert_eq!(manager.comic_sem.available_permits(), places as usize);
     }
 
     /// A task for the comic `id` whose archive goes to `library/<name>`
