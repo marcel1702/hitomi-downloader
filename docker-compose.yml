@@ -28,9 +28,10 @@ services:
       # In the .env file the hash is written in single quotes. Written here, in this file, every
       # `$` of it would have to be doubled to `$$`.
       HITOMI_PASSWORD_HASH: "${HITOMI_PASSWORD_HASH:?create the hash with the command docker run --rm -it ghcr.io/marcel1702/hitomi-downloader hash-password}"
-      # Where the library and the exports are mounted in this container, any path will do
+      # Where the library is mounted in this container, any path will do. The exports go to
+      # /data/export, where the image has made a folder every user may write to, so that a new
+      # named volume inherits it.
       HITOMI_LIBRARY_DIR: /library
-      HITOMI_EXPORT_DIR: /export
       # Uncomment behind a reverse proxy that serves https:
       # HITOMI_PUBLIC_URL: https://hitomi.example.com
       # HITOMI_TRUST_FORWARDED_FOR: "true"
@@ -50,7 +51,7 @@ services:
         bind:
           create_host_path: false
       # The exports, which must not lie inside the library (Kavita would list them a second time)
-      - hitomi-export:/export
+      - hitomi-export:/data/export
 
   # Optional, a Kavita that reads the library. In its library settings set the file type to
   # "Archive" only.
