@@ -29,6 +29,7 @@ Download and run, no installation of a runtime required.
 | 📂 Export | One-click export to PDF or CBZ into a separate export directory. |
 | 🌐 English and German | The interface ships both languages and switches at runtime. |
 | 🗂️ Custom folder structure | Freely configurable naming from fields like type, artist, title, language and id. |
+| 🐳 Web version | The same interface in the browser, as a Docker image for a server: [one place](#-web-version-docker) for the downloads, on a folder that Kavita reads. |
 
 ## 🖥️ Screenshots
 
@@ -51,6 +52,83 @@ the right-click menu, or `Export All` for the whole library.
 📹 The video below walks through the whole flow. **It is safe for work.**
 
 https://github.com/user-attachments/assets/d2d0e577-c074-41ca-996f-445d52e2cce5
+
+## 🐳 Web version (Docker)
+
+Besides the desktop app there is a web version for a server: the same interface in the browser,
+one place to manage the downloads from any device, and the comics in a folder that Kavita reads.
+It is a Docker image for `amd64` and `arm64`, `ghcr.io/marcel1702/hitomi-downloader`. It does not
+contain the desktop app, there is no GTK or WebKit in it.
+
+### Quick start
+
+1. Make the hash of your password: `docker run --rm -it ghcr.io/marcel1702/hitomi-downloader hash-password`
+2. Copy `.env.example` to `.env` next to [`docker-compose.yml`](docker-compose.yml) and fill it in: the
+   login, the hash, and `LIBRARY_PATH`, the folder on the Docker host where the comics go. Keep the single
+   quotes around the hash, they stop Docker Compose from reading its `$` as variables.
+3. `docker compose up -d`, then open `http://<server>:8080` and log in. Add `--profile kavita` to start a
+   Kavita on the same folder as well.
+
+The image is as visible as this repository. While that is private, `docker login ghcr.io` with a token
+that may read packages comes first.
+
+### Settings
+
+All of them are environment variables. The login has no default: **the server does not start without one**.
+
+| Variable | Meaning |
+|---|---|
+| `HITOMI_USERNAME`, `HITOMI_PASSWORD_HASH` | The login. `HITOMI_PASSWORD` (plain) works too, less safe |
+| `HITOMI_LIBRARY_DIR` | Where the downloads go, a directory that is mounted into the container. Default `/data/library`, any path will do |
+| `HITOMI_EXPORT_DIR` | Where "Export to server" writes, default `/data/export`. Not inside the library |
+| `HITOMI_CONFIG_DIR` | `config.json`, the logins, the logs and the pages of running downloads, default `/config` |
+| `PUID`, `PGID`, `UMASK` | The user and group the files belong to (default `1000:1000`), and their rights (default `022`) |
+| `TZ` | Time zone of the logs |
+| `HITOMI_PORT` | The port in the container, default `8080` |
+| `HITOMI_PUBLIC_URL` | The address you reach it under, behind a reverse proxy. `https://` makes the login cookie `Secure` |
+| `HITOMI_TRUST_FORWARDED_FOR` | Behind a reverse proxy: count the failed logins per client and not per proxy |
+| `HITOMI_SESSION_DAYS` | How long a login lasts, default 30 days |
+| `HITOMI_TEMP_DIR` | Where the pages of running downloads are, default `downloading` in the config directory |
+| `HITOMI_REQUIRE_MOUNT` | Refuse to start if a data directory is not a mount. The image sets it to `true` |
+| `HITOMI_MAX_NAME_BYTES` | A lower limit for file names, between 100 and 255 |
+
+### Where the library can live
+
+The library is only a directory for the container, it can be a folder of the Docker host, a named volume,
+or a folder that is itself an NFS or SMB share mounted on the host. No path is a given, mount it where you
+like and tell the server with `HITOMI_LIBRARY_DIR`. The comics hold no path, so the same folder can be called
+one thing in Kavita and another here, and be moved to another mount point later.
+
+- **Owner and rights.** The files belong to `PUID:PGID`. On an NFS share the numeric ids count, and its
+  settings (root squash, a user it maps everyone to) decide who may write. `UMASK` decides whether the Kavita
+  user can read what is written. **The library is never `chown`ed**, only `/config` is handed to the user.
+- **It checks at the start.** A directory the user can not write, with the user, its owner and what to do about
+  it in the message, and a directory where nothing is mounted, which would lose its files with the container.
+- **A missing mount.** With the short form of a bind mount Docker makes an empty folder on the host if the source
+  is missing, and the downloads would go to its local disk without anyone noticing. Use the long form with
+  `create_host_path: false`, as the compose file does, so that the container refuses to start without the mount.
+- **Short file names.** The server finds out how long a file name may be in the library and shortens long
+  titles to fit. An encrypted shared folder of a Synology NAS allows about 143 bytes and not 255. Set
+  `HITOMI_MAX_NAME_BYTES` if a share lies about its limit.
+
+### Login, https and the internet
+
+Every page needs a login, there is no way around it. The session lasts 30 days and survives a restart,
+five failed logins in a row lock the address out for 15 minutes. It still should not face the internet
+without https: put a reverse proxy in front of it, set `HITOMI_PUBLIC_URL` to the address, and
+`HITOMI_TRUST_FORWARDED_FOR=true` so that the lockout counts the client and not the proxy.
+
+### Downloading and exporting
+
+In the browser a comic is saved on the device you sit at with **Download PDF** and **Download CBZ**, under its
+real name. **Export All** and the entries "to server" of the context menu write into the export directory of
+the server instead. Using the library with Kavita, with the file type `Archive`, is described below.
+
+### Versions and updates
+
+An image is tagged with its version: `1.2.3`, `1.2`, `1`, and `latest` for the newest release. A pre-release
+only has its own tag. `docker compose pull && docker compose up -d` updates. To build the image yourself,
+`docker build -t hitomi-downloader .` in this directory.
 
 ## 📄 What a download looks like
 
