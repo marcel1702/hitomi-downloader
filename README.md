@@ -147,6 +147,11 @@ only has its own tag. `docker compose pull && docker compose up -d` updates. To 
     └── cover.webp                           thumbnail for the library view
 ```
 
+The folder format is set in the settings. The default is `{artists}/{title} ({id}) - {language}`, which
+puts a comic in the folder of its artists, for example `mameroku/Soushi Souai. (2829145) - german`. The
+id keeps two galleries with the same title apart. A comic without artists goes straight into the download
+directory. A format you saved earlier is kept.
+
 Downloads made by older versions, which stored loose images, keep working: the reader and
 both exports fall back to the folder when no archive is present.
 
