@@ -133,6 +133,19 @@ pnpm tauri build
 
 For a development build with hot reload, use `pnpm tauri dev` instead.
 
+#### 🏷️ Making a release
+
+Push a tag named `vMAJOR.MINOR.PATCH`, for example `v1.2.3`, or `v1.2.3-rc.1` for a
+pre-release. The release workflow takes the version from the tag and writes it into
+`Cargo.toml`, `Cargo.lock`, `src-tauri/tauri.conf.json` and `package.json` before it builds, so
+the About dialogs, the web version, the `ComicInfo.xml` of the downloads and the names of the
+installers all say the same. **There is no version to edit before tagging.** A tag that is not
+a version stops the workflow before anything is built. The version in the repository is only
+what a build on your own machine reports.
+
+`node .github/scripts/set-version.mjs v1.2.3` does the same by hand, should you want to try it,
+and `node --test .github/scripts/*.test.mjs` tests it.
+
 ## 🌐 Adding a new language
 
 Translations are welcome. The interface ships English and German, and a further language is
