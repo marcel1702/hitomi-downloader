@@ -1,0 +1,4 @@
+# Debian packages are not pinned to a version: the base image follows trixie, and a pinned
+# patch version stops existing as soon as Debian publishes the next one
+ignored:
+  - DL3008

@@ -1,0 +1,27 @@
+# What the image build does not need, and what would only make the build context big
+**/.git
+.github/*
+# the script that sets the version of a release is used by the image build
+!.github/scripts
+.claude
+.vscode
+.idea
+
+# build output and downloaded dependencies of this repository
+target
+**/target
+node_modules
+dist
+dist-web
+src-tauri/gen
+
+# only the logo of the About dialog of the desktop app's icons is part of the image, see the Dockerfile
+src-tauri/icons/*
+!src-tauri/icons/128x128.png
+
+# local state and documentation
+*.md
+!README.md
+docker-compose*.yml
+.env
+.env.*
