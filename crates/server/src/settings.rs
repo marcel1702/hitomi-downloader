@@ -1,6 +1,7 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
+    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context as _};
@@ -27,6 +28,9 @@ pub struct Settings {
     /// File names are at most this long (`HITOMI_MAX_NAME_BYTES`), for a share that allows
     /// less than the server finds out by itself. Can only lower the limit, never raise it.
     pub max_name_bytes: Option<usize>,
+    /// How often the followed searches are checked (`HITOMI_FOLLOW_INTERVAL_HOURS`), none
+    /// when the checks are off. A check can still be asked for by hand.
+    pub follow_interval: Option<Duration>,
     /// The frontend built by `pnpm build:web` (`HITOMI_WEB_DIR`)
     pub web_dir: PathBuf,
     /// `HITOMI_HOST` and `HITOMI_PORT`
@@ -38,6 +42,8 @@ pub struct Settings {
 /// the network is a decision to make on purpose
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const DEFAULT_PORT: u16 = 8080;
+const DEFAULT_FOLLOW_INTERVAL_HOURS: u64 = 6;
+const MAX_FOLLOW_INTERVAL_HOURS: u64 = 24 * 30;
 
 impl Settings {
     pub fn from_env() -> anyhow::Result<Settings> {
@@ -126,6 +132,24 @@ impl Settings {
             None => None,
         };
 
+        // 0 switches the checks off, a check more often than every hour would hammer Hitomi
+        let follow_interval = match var("HITOMI_FOLLOW_INTERVAL_HOURS") {
+            Some(hours) => {
+                let hours: u64 = hours
+                    .trim()
+                    .parse()
+                    .ok()
+                    .filter(|hours| *hours <= MAX_FOLLOW_INTERVAL_HOURS)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "HITOMI_FOLLOW_INTERVAL_HOURS `{hours}` is no number of hours between 1 and {MAX_FOLLOW_INTERVAL_HOURS}, or 0 for no checks"
+                        )
+                    })?;
+                (hours > 0).then(|| Duration::from_secs(hours * 3600))
+            }
+            None => Some(Duration::from_secs(DEFAULT_FOLLOW_INTERVAL_HOURS * 3600)),
+        };
+
         let config_dir =
             var("HITOMI_CONFIG_DIR").map_or_else(|| PathBuf::from("config"), PathBuf::from);
 
@@ -137,6 +161,7 @@ impl Settings {
             max_name_bytes,
             temp_dir: var("HITOMI_TEMP_DIR")
                 .map_or_else(|| config_dir.join("downloading"), PathBuf::from),
+            follow_interval,
             web_dir: var("HITOMI_WEB_DIR").map_or_else(|| PathBuf::from("dist-web"), PathBuf::from),
             addr: SocketAddr::new(host, port),
             auth: AuthSettings {
@@ -236,6 +261,35 @@ mod tests {
         }
         assert!(settings(&[("HITOMI_MAX_NAME_BYTES", "100")]).is_ok());
         assert!(settings(&[("HITOMI_MAX_NAME_BYTES", "255")]).is_ok());
+    }
+
+    #[test]
+    fn the_followed_searches_are_checked_every_six_hours_unless_told_otherwise() {
+        let hours = |settings: Settings| settings.follow_interval.map(|d| d.as_secs() / 3600);
+        assert_eq!(hours(settings_with(&[])), Some(6));
+        assert_eq!(
+            hours(settings_with(&[("HITOMI_FOLLOW_INTERVAL_HOURS", "1")])),
+            Some(1)
+        );
+        assert_eq!(
+            hours(settings_with(&[("HITOMI_FOLLOW_INTERVAL_HOURS", " 24 ")])),
+            Some(24)
+        );
+        assert_eq!(
+            hours(settings_with(&[("HITOMI_FOLLOW_INTERVAL_HOURS", "720")])),
+            Some(720)
+        );
+        // 0 switches them off
+        assert_eq!(
+            hours(settings_with(&[("HITOMI_FOLLOW_INTERVAL_HOURS", "0")])),
+            None
+        );
+        for bad in ["721", "-1", "1.5", "often", "6h"] {
+            assert!(
+                settings(&[("HITOMI_FOLLOW_INTERVAL_HOURS", bad)]).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

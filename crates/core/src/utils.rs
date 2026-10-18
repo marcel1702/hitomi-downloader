@@ -122,6 +122,55 @@ pub fn filename_filter_to(s: &str, limit: usize) -> String {
         .to_string()
 }
 
+/// Write `bytes` to `path`, all of it or nothing
+///
+/// The file is written next to it, made durable and then renamed over it, so that a crash
+/// leaves the old file or the new one and never half of one.
+pub fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    use std::io::Write as _;
+
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    let mut out = std::fs::File::create(&tmp)
+        .with_context(|| format!("Failed to create `{}`", tmp.display()))?;
+    out.write_all(bytes)
+        .and_then(|()| out.sync_all())
+        .with_context(|| format!("Failed to write `{}`", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| {
+        format!(
+            "Failed to rename `{}` to `{}`",
+            tmp.display(),
+            path.display()
+        )
+    })?;
+    if let Some(dir) = path.parent() {
+        // not every file system can sync a directory, the file itself is on the disk
+        let _ = crate::pages::sync_dir(dir);
+    }
+    Ok(())
+}
+
+/// Move a file that can not be used to `<name>.corrupt`, so that a new one can be written
+/// and what was in it can still be looked at
+pub fn set_aside(path: &std::path::Path, what: &str, reason: &str) {
+    let mut aside = path.as_os_str().to_owned();
+    aside.push(".corrupt");
+    let aside = std::path::PathBuf::from(aside);
+    match std::fs::rename(path, &aside) {
+        Ok(()) => tracing::error!(
+            "{what} `{}` can not be used ({reason}), it was moved to `{}` and starts empty",
+            path.display(),
+            aside.display()
+        ),
+        Err(err) => tracing::error!(
+            "{what} `{}` can not be used ({reason}) and could not be moved away: {err}",
+            path.display()
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

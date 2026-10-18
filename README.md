@@ -92,7 +92,7 @@ All of them are environment variables. The login has no default: **the server do
 | `HITOMI_USERNAME`, `HITOMI_PASSWORD_HASH` | The login. `HITOMI_PASSWORD` (plain) works too, less safe |
 | `HITOMI_LIBRARY_DIR` | Where the downloads go, a directory that is mounted into the container. Default `/data/library`, any path will do |
 | `HITOMI_EXPORT_DIR` | Where "Export to server" writes, default `/data/export`. Not inside the library |
-| `HITOMI_CONFIG_DIR` | `config.json`, the logins, the logs, the download queue (`queue.json`) and the pages of running downloads, default `/config` |
+| `HITOMI_CONFIG_DIR` | `config.json`, the logins, the logs, the download queue (`queue.json`), the followed searches (`subscriptions.json`) and the pages of running downloads, default `/config` |
 | `PUID`, `PGID`, `UMASK` | The user and group the files belong to (default `1000:1000`), and their rights (default `022`) |
 | `TZ` | Time zone of the logs |
 | `HITOMI_PORT` | The port in the container, default `8080` |
@@ -100,6 +100,7 @@ All of them are environment variables. The login has no default: **the server do
 | `HITOMI_TRUST_FORWARDED_FOR` | Behind a reverse proxy: count the failed logins per client and not per proxy |
 | `HITOMI_SESSION_DAYS` | How long a login lasts, default 30 days |
 | `HITOMI_TEMP_DIR` | Where the pages of running downloads are, default `downloading` in the config directory |
+| `HITOMI_FOLLOW_INTERVAL_HOURS` | How often the followed searches are checked for new galleries, default `6`, from `1` to `720`, `0` for no automatic checks |
 | `HITOMI_REQUIRE_MOUNT` | Refuse to start if a data directory is not a mount. The image sets it to `true` |
 | `HITOMI_MAX_NAME_BYTES` | A lower limit for file names, between 100 and 255 |
 

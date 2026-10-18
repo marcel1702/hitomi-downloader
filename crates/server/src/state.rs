@@ -15,6 +15,8 @@ pub struct AppState {
     pub pdf_permits: std::sync::Arc<tokio::sync::Semaphore>,
     pub events: broadcast::Sender<Event>,
     pub comics: std::sync::Arc<ComicCache>,
+    /// The searches that are followed
+    pub subscriptions: std::sync::Arc<hitomi_core::subscriptions::Subscriptions>,
     /// Turns `true` once the server shuts down, which ends the event streams
     pub shutdown: watch::Receiver<bool>,
 }

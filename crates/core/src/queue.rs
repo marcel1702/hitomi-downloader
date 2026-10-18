@@ -4,18 +4,15 @@
 //! and the ones that failed, which stay in the list for a retry. A comic is stored whole, so
 //! that restoring the queue needs no request to Hitomi, and with the format it was queued
 //! with, which a later change of the setting must not alter.
-use std::{
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     download_manager::DownloadTaskState,
-    pages,
     types::{Comic, DownloadFormat},
+    utils,
 };
 
 /// Bumped when the file changes in a way an older version could not read
@@ -62,8 +59,9 @@ pub fn load(path: &Path) -> Vec<StoredTask> {
     match serde_json::from_str::<QueueFile>(&text) {
         Ok(file) if file.version == FILE_VERSION => file.tasks,
         Ok(file) => {
-            set_aside(
+            utils::set_aside(
                 path,
+                "The download queue",
                 &format!(
                     "its version is {}, this one reads {FILE_VERSION}",
                     file.version
@@ -72,65 +70,26 @@ pub fn load(path: &Path) -> Vec<StoredTask> {
             Vec::new()
         }
         Err(err) => {
-            set_aside(path, &err.to_string());
+            utils::set_aside(path, "The download queue", &err.to_string());
             Vec::new()
         }
     }
 }
 
-fn set_aside(path: &Path, reason: &str) {
-    let mut aside = path.as_os_str().to_owned();
-    aside.push(".corrupt");
-    let aside = PathBuf::from(aside);
-    match std::fs::rename(path, &aside) {
-        Ok(()) => tracing::error!(
-            "The download queue `{}` can not be used ({reason}), it was moved to `{}` and the queue starts empty",
-            path.display(),
-            aside.display()
-        ),
-        Err(err) => tracing::error!(
-            "The download queue `{}` can not be used ({reason}) and could not be moved away: {err}",
-            path.display()
-        ),
-    }
-}
-
-/// Write `tasks` to `path`, all of it or nothing
-///
-/// The file is written next to it, made durable and then renamed over it, so that a crash
-/// leaves the old queue or the new one and never half of one.
+/// Write `tasks` to `path`, all of it or nothing, see [`utils::write_atomically`]
 pub fn save(path: &Path, tasks: &[StoredTask]) -> anyhow::Result<()> {
     let file = QueueFile {
         version: FILE_VERSION,
         tasks: tasks.to_vec(),
     };
     let json = serde_json::to_vec(&file).context("Failed to serialize the download queue")?;
-
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    let mut out = std::fs::File::create(&tmp)
-        .with_context(|| format!("Failed to create `{}`", tmp.display()))?;
-    out.write_all(&json)
-        .and_then(|()| out.sync_all())
-        .with_context(|| format!("Failed to write `{}`", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| {
-        format!(
-            "Failed to rename `{}` to `{}`",
-            tmp.display(),
-            path.display()
-        )
-    })?;
-    if let Some(dir) = path.parent() {
-        // not every file system can sync a directory, the file itself is on the disk
-        let _ = pages::sync_dir(dir);
-    }
-    Ok(())
+    utils::write_atomically(path, &json)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn temp_file() -> (PathBuf, PathBuf) {
         let dir = std::env::temp_dir().join(format!("hitomi-queue-{}", uuid::Uuid::new_v4()));
