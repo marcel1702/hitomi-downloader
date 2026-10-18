@@ -45,9 +45,9 @@ jobs:
     name: Lint (Dockerfile, scripts, compose file)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: hadolint/hadolint-action@v3.5.0
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: Dockerfile
 
@@ -95,11 +95,11 @@ jobs:
     name: Image (build and start, amd64)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           load: true
@@ -149,24 +149,61 @@ jobs:
           test "$code" = 200 || { echo "the login answered $code" >&2; docker compose logs hitomi-downloader; exit 1; }
           docker compose -f docker-compose.yml -f compose.ci.yml down -v
 
-  # What the release does first: the server for both platforms, at the same time. Only the stage
-  # that compiles it, which runs on this machine for both. Without this the first time both were
-  # built together was the publishing of a release, which failed because they shared a cache.
+  # What the release does first, and the same way: the image for both platforms at the same time,
+  # with the version argument and the caches of the release. Without this the first time both
+  # were built together was the publishing of a release, which failed because they shared a cache.
+  #
+  # The server is always compiled here, never taken from the cache: a cache hit would turn the
+  # check green without compiling anything. On a tag the result goes to the cache the release
+  # reads right after, so the release does not compile it a second time.
+  #
+  # A pull request builds both only when it touches what can differ between the two: the
+  # Dockerfile, the dependencies and toolchain, this workflow and the version script. The Rust
+  # code itself has nothing that depends on the architecture, the image job compiles it for amd64.
   platforms:
-    name: Server for both platforms (as the release builds it)
+    name: Image for both platforms (as the release builds it)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # the merge commit of a pull request and its first parent, the base
+          fetch-depth: 2
 
-      - uses: docker/setup-buildx-action@v4
+      - name: Does the change concern both platforms
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -eu
+          if [ "$EVENT" != pull_request ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pattern='^(Dockerfile|\.dockerignore|Cargo\.(toml|lock)|crates/[^/]+/Cargo\.toml|src-tauri/Cargo\.toml|rust-toolchain(\.toml)?|\.cargo/.*|\.github/workflows/docker\.yml|\.github/scripts/set-version\.mjs)$'
+          if git diff --name-only HEAD^1 HEAD | grep -E "$pattern"; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing that differs between amd64 and arm64 changed, the image job covers it"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - uses: docker/build-push-action@v7
+      - if: steps.scope.outputs.build == 'true'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - if: steps.scope.outputs.build == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - if: steps.scope.outputs.build == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          target: server
           platforms: linux/amd64,linux/arm64
           outputs: type=cacheonly
+          # the version of the tag, as the release passes it, and a pre-release otherwise
+          build-args: VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.0.0-ci' }}
+          no-cache-filters: server
           cache-from: type=gha,scope=image-multi
+          cache-to: type=gha,scope=image-multi,mode=max
 
   publish:
     name: Publish (amd64 and arm64)
@@ -177,15 +214,15 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Only the last stage of the image runs under emulation, to install its few packages. The
       # server itself is compiled for arm64 on the amd64 machine.
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -193,7 +230,7 @@ jobs:
 
       # 1.2.3 and 1.2 and 1 and latest for a release, only 1.2.3-rc.1 for a pre-release
       - id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -204,7 +241,7 @@ jobs:
             org.opencontainers.image.title=hitomi-downloader
             org.opencontainers.image.description=The web version of hitomi-downloader
 
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
