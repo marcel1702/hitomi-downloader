@@ -155,6 +155,10 @@ where
 
 /// Hand an event of the file watcher to the task that reads them, `false` if that has ended
 ///
+/// Only a removed file and an error of the watcher are handed on, the task does nothing with
+/// the rest. Every line written to the log changes its file, which would wake the task for
+/// nothing each time.
+///
 /// It has ended when the process shuts down, and the thread of `notify` may still deliver an
 /// event then. There is nobody left to tell, and an error written here would go to the very
 /// file that is watched, and cause the next event.
@@ -162,6 +166,12 @@ fn forward_watch_event(
     sender: &tokio::sync::mpsc::Sender<notify::Result<notify::Event>>,
     event: notify::Result<notify::Event>,
 ) -> bool {
+    if event
+        .as_ref()
+        .is_ok_and(|event| !matches!(event.kind, notify::EventKind::Remove(_)))
+    {
+        return !sender.is_closed();
+    }
     sender.blocking_send(event).is_ok()
 }
 
@@ -199,13 +209,12 @@ async fn file_log_watcher(context: Context) {
 
     while let Some(res) = receiver.recv().await {
         match res.map_err(anyhow::Error::from) {
-            Ok(event) => {
-                if let notify::EventKind::Remove(_) = event.kind {
-                    if let Err(err) = reload_file_logger() {
-                        let err_title = "Failed to reload log file";
-                        let string_chain = err.to_string_chain();
-                        tracing::error!(err_title, message = string_chain);
-                    }
+            // a file was removed, `forward_watch_event` lets no other event through
+            Ok(_) => {
+                if let Err(err) = reload_file_logger() {
+                    let err_title = "Failed to reload log file";
+                    let string_chain = err.to_string_chain();
+                    tracing::error!(err_title, message = string_chain);
                 }
             }
             Err(err) => {
@@ -222,7 +231,41 @@ mod tests {
     use super::*;
 
     fn event() -> notify::Result<notify::Event> {
-        Ok(notify::Event::new(notify::EventKind::Any))
+        Ok(notify::Event::new(notify::EventKind::Remove(
+            notify::event::RemoveKind::File,
+        )))
+    }
+
+    #[test]
+    fn only_a_removed_file_and_errors_are_forwarded() {
+        use notify::event::{AccessKind, CreateKind, DataChange, ModifyKind};
+        use notify::EventKind;
+
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+        for kind in [
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            EventKind::Modify(ModifyKind::Any),
+            EventKind::Create(CreateKind::File),
+            EventKind::Access(AccessKind::Any),
+            EventKind::Any,
+            EventKind::Other,
+        ] {
+            assert!(forward_watch_event(&sender, Ok(notify::Event::new(kind))));
+            assert!(receiver.try_recv().is_err(), "{kind:?} was forwarded");
+        }
+        assert!(forward_watch_event(&sender, event()));
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(Ok(notify::Event {
+                kind: EventKind::Remove(_),
+                ..
+            }))
+        ));
+        assert!(forward_watch_event(
+            &sender,
+            Err(notify::Error::generic("the watcher broke"))
+        ));
+        assert!(matches!(receiver.try_recv(), Ok(Err(_))));
     }
 
     #[test]

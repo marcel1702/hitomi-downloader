@@ -991,6 +991,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn page_zero_of_a_search_is_an_error_and_no_panic() {
+        // answered before Hitomi is asked, so no request leaves the test
+        for (uri, body) in [
+            (
+                "/api/search",
+                json!({ "query": "language:english", "pageNum": 0, "sort": "Date" }),
+            ),
+            ("/api/get_page", json!({ "ids": [1, 2, 3], "pageNum": 0 })),
+        ] {
+            let (status, body) = request("POST", uri, Some(body)).await;
+            assert!(
+                status.is_server_error() || status.is_client_error(),
+                "{uri}"
+            );
+            assert!(
+                String::from_utf8_lossy(&body).contains("the first page is 1"),
+                "{uri}: {}",
+                String::from_utf8_lossy(&body)
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a_page_past_the_end_is_not_found() {
         let (state, _) = test_state();
         state.comics.insert(&hitomi_core::types::Comic {

@@ -44,6 +44,48 @@ impl std::fmt::Display for UnexpectedStatus {
 
 impl std::error::Error for UnexpectedStatus {}
 
+/// Whether `err` says that an image is not where its url points, which a stale `gg.js` causes
+pub fn is_stale_url_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<UnexpectedStatus>()
+        .is_some_and(|err| matches!(err.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND))
+}
+
+/// Download an image with `fetch` from the url `url` builds right before the request
+///
+/// The url depends on `gg.js`, which Hitomi rotates. A url built from an older copy points
+/// at a path that is not there any more. If the server says the image is not there, `refresh`
+/// makes the next url come from a fresh `gg.js`, and the url is built once more before giving
+/// up. The download and the viewer both fetch their images this way.
+pub async fn fetch_with_fresh_url<Url, Fetch, Refresh>(
+    url: impl Fn() -> Url,
+    fetch: impl Fn(String) -> Fetch,
+    refresh: impl FnOnce() -> Refresh,
+) -> anyhow::Result<Bytes>
+where
+    Url: std::future::Future<Output = anyhow::Result<String>>,
+    Fetch: std::future::Future<Output = anyhow::Result<Bytes>>,
+    Refresh: std::future::Future<Output = ()>,
+{
+    let first_url = url().await?;
+    let err = match fetch(first_url.clone()).await {
+        Ok(data) => return Ok(data),
+        Err(err) => err,
+    };
+    if !is_stale_url_error(&err) {
+        return Err(err).context(format!("Failed to download `{first_url}`"));
+    }
+
+    tracing::debug!(
+        url = first_url,
+        "Image url looks stale, building it again from a fresh gg.js"
+    );
+    refresh().await;
+    let fresh_url = url().await?;
+    fetch(fresh_url.clone())
+        .await
+        .context(format!("Failed to download `{fresh_url}`"))
+}
+
 #[derive(Clone)]
 pub struct HitomiClient {
     context: Context,
@@ -108,10 +150,13 @@ impl HitomiClient {
 
         // Calculate total pages by ceiling division
         let total_page = ids.len().div_ceil(PAGE_SIZE);
+        let Some(skipped_pages) = page_num.checked_sub(1) else {
+            return Err(anyhow!("There is no page {page_num}, the first page is 1"));
+        };
 
         let get_gallery_info_tasks = ids
             .iter()
-            .skip((page_num - 1) * PAGE_SIZE)
+            .skip(skipped_pages.saturating_mul(PAGE_SIZE))
             .take(PAGE_SIZE)
             .map(|id| async move {
                 hitomi::get_gallery_info(*id)
@@ -331,6 +376,139 @@ mod tests {
             r#"{{"id": {id}, "title": "t", "type": "manga", "date": "2023-01-01 00:00:00-05"}}"#
         );
         Ok(serde_json::from_str(&json)?)
+    }
+
+    fn status_error(status: StatusCode) -> anyhow::Error {
+        UnexpectedStatus {
+            status,
+            body: String::new(),
+        }
+        .into()
+    }
+
+    #[test]
+    fn missing_image_counts_as_stale_url() {
+        assert!(is_stale_url_error(&status_error(StatusCode::NOT_FOUND)));
+        assert!(is_stale_url_error(&status_error(StatusCode::FORBIDDEN)));
+        // still recognised once a caller added context
+        let wrapped = status_error(StatusCode::NOT_FOUND).context("Failed to download");
+        assert!(is_stale_url_error(&wrapped));
+    }
+
+    #[test]
+    fn other_failures_are_not_retried_with_a_fresh_url() {
+        assert!(!is_stale_url_error(&status_error(
+            StatusCode::INTERNAL_SERVER_ERROR
+        )));
+        assert!(!is_stale_url_error(&status_error(
+            StatusCode::TOO_MANY_REQUESTS
+        )));
+        assert!(!is_stale_url_error(&anyhow!("connection reset")));
+    }
+
+    /// `gg.js` as Hitomi serves it, which rotates, and the images it points at
+    struct FakeHitomi {
+        /// The copy of `gg.js` the client knows
+        known: std::sync::atomic::AtomicU32,
+        /// The one on the server, the only one whose urls work
+        served: std::sync::atomic::AtomicU32,
+        requests: parking_lot::Mutex<Vec<String>>,
+    }
+
+    impl FakeHitomi {
+        fn new(version: u32) -> Self {
+            Self {
+                known: version.into(),
+                served: version.into(),
+                requests: parking_lot::Mutex::new(Vec::new()),
+            }
+        }
+
+        /// An image fetched as the viewer and the download fetch it
+        async fn fetch(&self) -> anyhow::Result<Bytes> {
+            fetch_with_fresh_url(
+                || async {
+                    Ok(format!(
+                        "https://a.example/{}/page.webp",
+                        self.known.load(SeqCst)
+                    ))
+                },
+                |url| async move {
+                    self.requests.lock().push(url.clone());
+                    if url.contains(&format!("/{}/", self.served.load(SeqCst))) {
+                        Ok(Bytes::from_static(b"image"))
+                    } else {
+                        Err(UnexpectedStatus {
+                            status: StatusCode::NOT_FOUND,
+                            body: String::new(),
+                        }
+                        .into())
+                    }
+                },
+                || async { self.known.store(self.served.load(SeqCst), SeqCst) },
+            )
+            .await
+        }
+    }
+
+    use std::sync::atomic::Ordering::SeqCst;
+
+    #[tokio::test]
+    async fn an_image_is_fetched_again_from_a_fresh_gg_js_once_it_rotated() {
+        let fake = FakeHitomi::new(1);
+        assert_eq!(fake.fetch().await.unwrap(), "image");
+        // Hitomi rotates gg.js, the copy the client has is stale now
+        fake.served.store(2, SeqCst);
+        assert_eq!(fake.fetch().await.unwrap(), "image");
+        assert_eq!(
+            *fake.requests.lock(),
+            [
+                "https://a.example/1/page.webp",
+                "https://a.example/1/page.webp",
+                "https://a.example/2/page.webp"
+            ]
+        );
+        // and the fresh copy is kept
+        fake.fetch().await.unwrap();
+        assert_eq!(fake.requests.lock().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn an_image_that_is_missing_with_a_fresh_gg_js_too_fails_after_one_more_try() {
+        let fake = FakeHitomi::new(1);
+        fake.served.store(3, SeqCst);
+        // refreshing finds 3, but the image is not there under 3 either
+        fake.known.store(1, SeqCst);
+        let err = fetch_with_fresh_url(
+            || async { Ok("https://a.example/1/page.webp".to_string()) },
+            |url| async {
+                fake.requests.lock().push(url);
+                Err(UnexpectedStatus {
+                    status: StatusCode::NOT_FOUND,
+                    body: String::new(),
+                }
+                .into())
+            },
+            || async {},
+        )
+        .await
+        .unwrap_err();
+        assert!(is_stale_url_error(&err));
+        assert_eq!(fake.requests.lock().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn other_failures_are_not_tried_again() {
+        let refreshed = std::sync::atomic::AtomicBool::new(false);
+        let err = fetch_with_fresh_url(
+            || async { Ok("https://a.example/1/page.webp".to_string()) },
+            |_| async { Err(anyhow!("connection reset")) },
+            || async { refreshed.store(true, SeqCst) },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string_chain().contains("connection reset"));
+        assert!(!refreshed.load(SeqCst));
     }
 
     fn ids_of(gallery_infos: &[GalleryInfo]) -> Vec<i32> {
