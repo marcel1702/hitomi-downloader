@@ -19,6 +19,7 @@ const webAliases = [
   { find: /^@tauri-apps\/api\/core$/, replacement: '/src/web/tauri-core.ts' },
   { find: /^@tauri-apps\/api\/event$/, replacement: '/src/web/tauri-event.ts' },
   { find: /^@tauri-apps\/api\/webviewWindow$/, replacement: '/src/web/tauri-webview-window.ts' },
+  { find: /^@tauri-apps\/api\/window$/, replacement: '/src/web/tauri-window.ts' },
   { find: /^@tauri-apps\/api\/app$/, replacement: '/src/web/tauri-app.ts' },
   { find: /^@tauri-apps\/api\/path$/, replacement: '/src/web/tauri-path.ts' },
   { find: /^@tauri-apps\/plugin-dialog$/, replacement: '/src/web/tauri-dialog.ts' },

@@ -2,6 +2,8 @@
 //
 // `pnpm build:web` builds the frontend with the mode `web`, see `vite.config.ts`.
 
+import { getCurrentWindow } from '@tauri-apps/api/window'
+
 /** Whether the frontend runs in a browser against the server instead of in the desktop app */
 export const isWeb = import.meta.env.MODE === 'web'
 
@@ -13,6 +15,25 @@ export function coverUrl(comicId: number): string {
 /** Page `index` (0 based) of a comic, served by the server */
 export function pageUrl(comicId: number, index: number): string {
   return `/api/comics/${comicId}/pages/${index}`
+}
+
+/**
+ * Put the app into fullscreen or take it out of it
+ *
+ * The browser tab goes fullscreen through the Fullscreen API, which only allows it during a key
+ * press or a click, so this is called before anything is awaited. The desktop app puts its Tauri
+ * window into fullscreen, the Fullscreen API of the webview does not work on every platform.
+ */
+export async function setAppFullscreen(on: boolean): Promise<void> {
+  if (!isWeb) {
+    await getCurrentWindow().setFullscreen(on)
+    return
+  }
+  if (on && document.fullscreenElement === null) {
+    await document.documentElement.requestFullscreen()
+  } else if (!on && document.fullscreenElement !== null) {
+    await document.exitFullscreen()
+  }
 }
 
 /** A comic as a file of `format`, built or served by the server for the browser to save */
