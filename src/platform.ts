@@ -39,35 +39,3 @@ export function startBrowserDownload(url: string) {
   document.body.appendChild(frame)
   setTimeout(() => frame.remove(), DOWNLOAD_FRAME_LIFETIME_MS)
 }
-
-/**
- * Put `text` on the clipboard, `false` if the browser does not allow it
- *
- * The clipboard API only exists on https and localhost. A server in the home network is
- * reached over plain http most of the time, there the older `execCommand` still works.
- */
-export async function copyText(text: string): Promise<boolean> {
-  if (navigator.clipboard !== undefined && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch {
-      // fall through to the older way
-    }
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  try {
-    return document.execCommand('copy')
-  } catch {
-    return false
-  } finally {
-    textarea.remove()
-  }
-}

@@ -7,7 +7,7 @@ import UncompletedProgresses from '../components/UncompletedProgresses.vue'
 import CompletedProgresses from '../components/CompletedProgresses.vue'
 import { useStore } from '../store.ts'
 import { useI18n } from '../utils.ts'
-import { PhGearSix } from '@phosphor-icons/vue'
+import { PhFolderOpen, PhGearSix } from '@phosphor-icons/vue'
 import SettingsDialog from '../components/SettingsDialog.vue'
 import { ProgressData } from '../types.ts'
 import { useRevealPath } from '../composables/useRevealPath.ts'
@@ -137,7 +137,7 @@ async function syncComicInSearch(progressData: ProgressData) {
   Object.assign(comic, { ...result.data })
 }
 
-const { revealPath, revealLabel, RevealIcon } = useRevealPath()
+const { revealPath } = useRevealPath()
 
 // Select download directory through dialog
 async function selectDownloadDir() {
@@ -164,20 +164,21 @@ async function showDownloadDirInFileManager() {
 <template>
   <div v-if="store.config !== undefined" class="flex flex-col gap-2">
     <div class="flex gap-1 box-border px-2 pt-2">
-      <n-input-group>
+      <!-- the folders of the web version are volumes of the server, the settings show them -->
+      <n-input-group v-if="!isWeb">
         <n-input-group-label size="small">
           {{ t('common.download_directory') }}
         </n-input-group-label>
         <n-input v-model:value="store.config.downloadDir" size="small" readonly @click="selectDownloadDir" />
-        <n-button class="w-9" size="small" :title="revealLabel" @click="showDownloadDirInFileManager">
+        <n-button class="w-9" size="small" :title="t('common.open_directory')" @click="showDownloadDirInFileManager">
           <template #icon>
             <n-icon size="20">
-              <component :is="RevealIcon" />
+              <PhFolderOpen />
             </n-icon>
           </template>
         </n-button>
       </n-input-group>
-      <n-button @click="settingsDialogShowing = true" size="small">
+      <n-button class="ml-auto" @click="settingsDialogShowing = true" size="small">
         <template #icon>
           <n-icon size="20">
             <PhGearSix />

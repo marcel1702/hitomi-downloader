@@ -43,7 +43,7 @@ async function pickComic() {
   store.currentTabName = 'comic'
 }
 
-const { revealPath, revealLabel } = useRevealPath()
+const { revealPath } = useRevealPath()
 
 async function showComicDownloadDirInFileManager() {
   const comicDownloadDir = props.comic.comicDownloadDir
@@ -159,8 +159,9 @@ function tagNs(female: number, male: number): string {
           <div class="ml-auto">{{ comic.files.length }}P</div>
         </div>
         <div class="flex mt-auto gap-1">
-          <n-button v-if="isDownloaded" size="tiny" @click="showComicDownloadDirInFileManager">
-            {{ revealLabel }}
+          <!-- the web version shows the path in the comic tab -->
+          <n-button v-if="isDownloaded && !isWeb" size="tiny" @click="showComicDownloadDirInFileManager">
+            {{ t('common.open_directory') }}
           </n-button>
           <template v-if="showExport && isDownloaded">
             <n-button type="primary" class="ml-auto" size="tiny" @click="exportPdf">

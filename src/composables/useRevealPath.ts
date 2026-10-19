@@ -1,38 +1,18 @@
-import { computed } from 'vue'
-import { useMessage } from 'naive-ui'
-import { useI18n } from 'vue-i18n'
-import { PhCopy, PhFolderOpen } from '@phosphor-icons/vue'
 import { commands } from '../bindings.ts'
-import { copyText, isWeb } from '../platform.ts'
 
 /**
- * Show where a file or folder is
+ * Open a file or folder in the file manager of the desktop app
  *
- * The desktop app opens it in the file manager. The files of the web version are on the
- * server, there the path is copied to the clipboard, or shown when the browser refuses that.
+ * The web version has no file manager, its folders are on the server. It shows them in the
+ * settings and the path of a comic in a dialog of the comic tab instead.
  */
 export function useRevealPath() {
-  const message = useMessage()
-  const { t } = useI18n()
-
   async function revealPath(path: string) {
-    if (!isWeb) {
-      const result = await commands.showPathInFileManager(path)
-      if (result.status === 'error') {
-        console.error(result.error)
-      }
-      return
-    }
-
-    if (await copyText(path)) {
-      message.success(t('common.path_copied', { path }))
-    } else {
-      message.info(t('common.path_on_server', { path }), { duration: 10000, closable: true })
+    const result = await commands.showPathInFileManager(path)
+    if (result.status === 'error') {
+      console.error(result.error)
     }
   }
 
-  const revealLabel = computed(() => (isWeb ? t('common.copy_path') : t('common.open_directory')))
-  const RevealIcon = isWeb ? PhCopy : PhFolderOpen
-
-  return { revealPath, revealLabel, RevealIcon }
+  return { revealPath }
 }
