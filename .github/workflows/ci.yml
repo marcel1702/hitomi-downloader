@@ -44,6 +44,10 @@ jobs:
       - name: Test the script that sets the version of a release
         run: node --test .github/scripts/*.test.mjs
 
+      # Node strips the types of the TypeScript the tests import itself
+      - name: Test the frontend logic
+        run: node --test src/*.test.mjs
+
   rust:
     name: Rust (fmt, clippy, check)
     runs-on: ubuntu-latest

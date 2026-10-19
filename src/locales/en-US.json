@@ -112,7 +112,20 @@
     "export_selection_cbz": "Export Selection CBZ",
     "export_selection_pdf": "Export Selection PDF",
     "export_all_cbz_started": "Exporting {count} comics as CBZ...",
-    "export_all_pdf_started": "Exporting {count} comics as PDF..."
+    "export_all_pdf_started": "Exporting {count} comics as PDF...",
+    "search_placeholder": "ID, title, artist, group, or artist:… tag:… -language:…",
+    "no_match": "No comic matches the search",
+    "sort": {
+      "downloaded_newest": "Recently downloaded",
+      "downloaded_oldest": "First downloaded",
+      "date_newest": "Newest on Hitomi",
+      "date_oldest": "Oldest on Hitomi",
+      "title_asc": "Title A–Z",
+      "title_desc": "Title Z–A",
+      "artist_asc": "Artist A–Z",
+      "pages_most": "Most pages",
+      "pages_fewest": "Fewest pages"
+    }
   },
   "delete": {
     "button": "Delete",
