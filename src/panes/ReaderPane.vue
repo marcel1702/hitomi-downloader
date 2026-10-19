@@ -360,6 +360,7 @@ function goToPage(index: number) {
   currentIndex.value = clamped
 
   if (readMode.value === 'scroll') {
+    startJump()
     nextTick(() => {
       const el = document.getElementById(`scroll-page-${clamped}`)
       el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -450,14 +451,98 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-function handleScroll(e: Event) {
-  if (readMode.value !== 'scroll' || !comic.value) return
-  const container = e.target as HTMLElement
-  const scrollTop = container.scrollTop
-  const pageHeight = container.scrollHeight / comic.value.files.length
-  const newIndex = Math.round(scrollTop / pageHeight)
-  if (newIndex !== currentIndex.value && newIndex >= 0 && newIndex < comic.value.files.length) {
-    currentIndex.value = newIndex
+// ---- Current page in scroll mode
+//
+// The current page is the one at the top of the visible area. An observer watches a thin strip
+// along the top edge of the scroll container and keeps the pages that cross it, whatever their
+// height, loaded or not. At the very bottom the last page is the current one, it may be too
+// short to ever reach the top. While a jump scrolls to its page the pages it passes are not
+// taken, the jump has set the current page already.
+
+const JUMP_SETTLE_MS = 150
+
+// the pages that cross the top strip, usually one, two where they meet
+const pagesAtTop = new Set<number>()
+let scrollPageObserver: IntersectionObserver | undefined
+let jumping = false
+let jumpTimer: ReturnType<typeof setTimeout> | undefined
+
+/** Pass on the scrolling of a jump, until it has come to rest */
+function startJump() {
+  jumping = true
+  // a jump to where the container already is scrolls nothing, the timer ends it then too
+  settleJump()
+}
+
+function settleJump() {
+  clearTimeout(jumpTimer)
+  jumpTimer = setTimeout(() => {
+    jumping = false
+  }, JUMP_SETTLE_MS)
+}
+
+function updateScrollIndex() {
+  const container = scrollContainerRef.value
+  if (readMode.value !== 'scroll' || jumping || !container || !comic.value) return
+  let index: number | undefined
+  if (container.scrollTop > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 1) {
+    index = comic.value.files.length - 1
+  } else if (pagesAtTop.size > 0) {
+    index = Math.min(...pagesAtTop)
+  }
+  // between two pages, in the gap, the page stays the one before
+  if (index !== undefined && index !== currentIndex.value) currentIndex.value = index
+}
+
+function observeScrollPages() {
+  scrollPageObserver?.disconnect()
+  pagesAtTop.clear()
+  const container = scrollContainerRef.value
+  if (!container) return
+  scrollPageObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const index = Number((entry.target as HTMLElement).dataset.scrollIndex)
+        if (entry.isIntersecting) pagesAtTop.add(index)
+        else pagesAtTop.delete(index)
+      }
+      updateScrollIndex()
+    },
+    { root: container, rootMargin: '0px 0px -99% 0px' },
+  )
+  container.querySelectorAll('[data-scroll-index]').forEach((page) => scrollPageObserver?.observe(page))
+}
+
+function handleScroll() {
+  if (jumping) {
+    settleJump()
+    return
+  }
+  updateScrollIndex()
+}
+
+watch(scrollContainerRef, (container) => {
+  if (!container) {
+    scrollPageObserver?.disconnect()
+    pagesAtTop.clear()
+    return
+  }
+  observeScrollPages()
+})
+
+// another comic has another number of pages
+watch(totalFiles, () => nextTick(observeScrollPages))
+
+// A page has its size from the metadata before its image is there, as a placeholder and as an
+// image that is not decoded yet. Otherwise the pages below it move when it loads, and with
+// them the page a jump is on its way to.
+function pageStyle(index: number, placeholder: boolean) {
+  const file = comic.value?.files[index]
+  if (!file || file.width <= 0 || file.height <= 0) return placeholder ? { width: '100%', height: '600px' } : {}
+  return {
+    width: fitWidth.value ? '100%' : `${file.width}px`,
+    maxWidth: '100%',
+    aspectRatio: `${file.width} / ${file.height}`,
   }
 }
 
@@ -509,7 +594,9 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   clearTimeout(slideshowTimer)
+  clearTimeout(jumpTimer)
   thumbnailObserver?.disconnect()
+  scrollPageObserver?.disconnect()
   clearCache()
   currentImage.value = undefined
   scrollImages.value.clear()
@@ -584,17 +671,23 @@ onUnmounted(() => {
       class="flex-1 overflow-auto"
       @scroll="handleScroll">
       <div class="flex flex-col items-center gap-1 p-2">
-        <template v-for="i in totalFiles" :key="i - 1">
+        <!-- the wrapper stays when the image replaces the placeholder, the observer keeps it -->
+        <div
+          v-for="i in totalFiles"
+          :key="i - 1"
+          :id="`scroll-page-${i - 1}`"
+          :data-scroll-index="i - 1"
+          class="w-full flex justify-center items-start">
           <img
-            :id="`scroll-page-${i - 1}`"
             v-if="scrollImages.has(i - 1)"
             :src="scrollImages.get(i - 1)"
             :class="['transition-all duration-200', fitWidth ? 'w-full' : 'max-w-full']"
+            :style="pageStyle(i - 1, false)"
             :alt="`Page ${i}`" />
-          <div v-else class="w-full h-[600px] flex items-center justify-center bg-gray-800">
+          <div v-else class="flex items-center justify-center bg-gray-800" :style="pageStyle(i - 1, true)">
             <n-spin size="small" />
           </div>
-        </template>
+        </div>
       </div>
     </div>
 
