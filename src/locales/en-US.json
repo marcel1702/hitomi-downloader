@@ -9,6 +9,9 @@
     "language": "Language",
     "tag": "Tag",
     "open_directory": "Open Folder",
+    "location": "Location",
+    "location_open": "Open the folder of the comic in the file manager",
+    "location_show": "Show the path of the comic on the server",
     "export_pdf": "Export PDF",
     "export_cbz": "Export CBZ",
     "download_pdf": "Download PDF",
@@ -164,7 +167,6 @@
     "related": "Related Comics",
     "read": "Read",
     "no_download_dir": "No download folder is known for this comic",
-    "show_path": "Show Path",
     "path_dialog_title": "Path on the server"
   },
   "reader_pane": {

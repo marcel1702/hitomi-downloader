@@ -9,6 +9,9 @@
     "language": "Sprache",
     "tag": "Tag",
     "open_directory": "Ordner öffnen",
+    "location": "Speicherort",
+    "location_open": "Den Ordner des Comics im Dateimanager öffnen",
+    "location_show": "Den Pfad des Comics auf dem Server anzeigen",
     "export_pdf": "Als PDF exportieren",
     "export_cbz": "Als CBZ exportieren",
     "download_pdf": "Als PDF herunterladen",
@@ -164,7 +167,6 @@
     "related": "Ähnliche Comics",
     "read": "Lesen",
     "no_download_dir": "Für diesen Comic ist kein Download-Ordner bekannt",
-    "show_path": "Pfad anzeigen",
     "path_dialog_title": "Pfad auf dem Server"
   },
   "reader_pane": {
