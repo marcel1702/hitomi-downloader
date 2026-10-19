@@ -1,6 +1,6 @@
 <script setup lang="tsx">
 import { Comic, commands, events } from '../bindings.ts'
-import { computed, onMounted, ref, watch, nextTick } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
 import { MessageReactive, useMessage, DropdownOption, NIcon } from 'naive-ui'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useStore } from '../store.ts'
@@ -12,8 +12,9 @@ import { useMultiSelect } from '../composables/useMultiSelect.ts'
 import { useRevealPath } from '../composables/useRevealPath.ts'
 import { useDeleteComics } from '../composables/useDeleteComics.ts'
 import { isWeb } from '../platform.ts'
+import { filterComics, SORT_PRESETS, SortPreset, sortComics } from '../library.ts'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 interface ProgressData {
   title: string
@@ -30,16 +31,45 @@ const message = useMessage()
 
 const PAGE_SIZE = 20
 
+// the whole library, in the order of the backend
 const downloadedComics = ref<Comic[]>([])
+
+// The search and the order of the list, see `library.ts`. The search follows the input a moment
+// after the last key, the list is not sorted and filtered again for every letter.
+const SEARCH_DELAY_MS = 200
+const searchInput = ref<string>('')
+const searchQuery = ref<string>('')
+const sortPreset = ref<SortPreset>('downloaded_newest')
+const sortOptions = computed(() => SORT_PRESETS.map((preset) => ({ label: t(`downloaded_pane.sort.${preset}`), value: preset })))
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+watch(searchInput, () => {
+  clearTimeout(searchTimer)
+  // emptied, with the clear button above all, the whole library comes back at once
+  if (searchInput.value.trim() === '') {
+    searchQuery.value = ''
+    return
+  }
+  searchTimer = setTimeout(() => {
+    searchQuery.value = searchInput.value
+  }, SEARCH_DELAY_MS)
+})
+onUnmounted(() => clearTimeout(searchTimer))
+
+// the comics the search finds, in the chosen order. The pages, "Select All" and the export of
+// all comics act on these.
+const shownComics = computed<Comic[]>(() =>
+  sortComics(filterComics(downloadedComics.value, searchQuery.value), sortPreset.value, locale.value),
+)
+
 const currentPage = ref<number>(1)
 const pageCount = computed<number>(() => {
-  return Math.ceil(downloadedComics.value.length / PAGE_SIZE)
+  return Math.ceil(shownComics.value.length / PAGE_SIZE)
 })
 // currentPageComics is a computed property that returns the comics on the current page
 const currentPageComics = computed<Comic[]>(() => {
   const start = (currentPage.value - 1) * PAGE_SIZE
   const end = start + PAGE_SIZE
-  return downloadedComics.value.slice(start, end)
+  return shownComics.value.slice(start, end)
 })
 
 // listen for changes in the tab and update the list of downloaded comics
@@ -210,6 +240,17 @@ watch(currentPage, () => {
   scrollToTop()
 })
 
+// Another search or order starts on the first page. The selection stays here too, also for the
+// comics the search hides.
+watch([searchQuery, sortPreset], () => {
+  if (currentPage.value !== 1) {
+    currentPage.value = 1
+    return
+  }
+  forgetElements()
+  scrollToTop()
+})
+
 const { contextMenuX, contextMenuY, contextMenuShowing, contextMenuOptions, showContextMenu } = useContextMenu()
 
 // a comic that is no longer in the list can not stay selected
@@ -222,11 +263,11 @@ watch(downloadedComics, () => {
 const selectedComics = computed<Comic[]>(() => downloadedComics.value.filter((comic) => selectedIds.value.has(comic.id)))
 const hasSelection = computed<boolean>(() => selectedComics.value.length > 0)
 
-// what the buttons above the list act on: the selection, or without one all comics
-const targetComics = computed<Comic[]>(() => (hasSelection.value ? selectedComics.value : downloadedComics.value))
+// what the buttons above the list act on: the selection, or without one all comics the search finds
+const targetComics = computed<Comic[]>(() => (hasSelection.value ? selectedComics.value : shownComics.value))
 
 function selectAllPages() {
-  selectedIds.value = new Set(downloadedComics.value.map((comic) => comic.id))
+  selectedIds.value = new Set(shownComics.value.map((comic) => comic.id))
   // the cards of this page get their look from the selection area as well
   selectionAreaRef.value?.selection?.select(selectableRefs.value)
 }
@@ -323,6 +364,16 @@ function useContextMenu() {
         </template>
       </n-button>
     </n-input-group>
+    <!-- in the web version this is the first row, where the export folder of the desktop app is -->
+    <div class="flex gap-2 px-2">
+      <n-input
+        v-model:value="searchInput"
+        class="flex-1"
+        size="small"
+        clearable
+        :placeholder="t('downloaded_pane.search_placeholder')" />
+      <n-select class="w-44" size="small" v-model:value="sortPreset" :options="sortOptions" />
+    </div>
     <div class="flex gap-2 px-2">
       <n-button size="small" :disabled="targetComics.length === 0" @click="exportCbz(targetComics)">
         <template #icon>
@@ -347,7 +398,7 @@ function useContextMenu() {
       <n-button v-if="hasSelection" class="ml-auto" size="small" quaternary @click="clearSelection">
         {{ t('common.clear_selection') }}
       </n-button>
-      <n-button v-else class="ml-auto" size="small" quaternary :disabled="downloadedComics.length === 0" @click="selectAllPages">
+      <n-button v-else class="ml-auto" size="small" quaternary :disabled="shownComics.length === 0" @click="selectAllPages">
         <template #icon>
           <n-icon size="18"><PhChecks /></n-icon>
         </template>
@@ -388,6 +439,10 @@ function useContextMenu() {
         :show="contextMenuShowing"
         :on-clickoutside="() => (contextMenuShowing = false)" />
     </SelectionArea>
+    <n-empty
+      v-else-if="searchQuery.trim() !== '' && downloadedComics.length > 0"
+      class="flex-1 pt-8"
+      :description="t('downloaded_pane.no_match')" />
     <div v-else class="flex-1"></div>
 
     <n-pagination
