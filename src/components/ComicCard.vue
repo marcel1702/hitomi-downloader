@@ -160,8 +160,12 @@ function tagNs(female: number, male: number): string {
         </div>
         <div class="flex mt-auto gap-1">
           <!-- the web version shows the path in the comic tab -->
-          <n-button v-if="isDownloaded && !isWeb" size="tiny" @click="showComicDownloadDirInFileManager">
-            {{ t('common.open_directory') }}
+          <n-button
+            v-if="isDownloaded && !isWeb"
+            size="tiny"
+            :title="t('common.location_open')"
+            @click="showComicDownloadDirInFileManager">
+            {{ t('common.location') }}
           </n-button>
           <template v-if="showExport && isDownloaded">
             <n-button type="primary" class="ml-auto" size="tiny" @click="exportPdf">

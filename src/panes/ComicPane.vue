@@ -153,8 +153,13 @@ function selectAll(event: FocusEvent) {
           <n-button v-if="store.pickedComic.isDownloaded" size="small" type="error" @click="deleteComics([store.pickedComic])">
             {{ t('delete.button') }}
           </n-button>
-          <n-button v-if="store.pickedComic.isDownloaded" size="small" @click="showComicDownloadDir">
-            {{ isWeb ? t('comic_pane.show_path') : t('common.open_directory') }}
+          <!-- one name for one question, where the comic lies, answered as the platform can -->
+          <n-button
+            v-if="store.pickedComic.isDownloaded"
+            size="small"
+            :title="isWeb ? t('common.location_show') : t('common.location_open')"
+            @click="showComicDownloadDir">
+            {{ t('common.location') }}
           </n-button>
         </div>
       </div>
