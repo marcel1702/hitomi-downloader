@@ -360,7 +360,7 @@ function goToPage(index: number) {
   currentIndex.value = clamped
 
   if (readMode.value === 'scroll') {
-    startJump()
+    startJump(clamped)
     nextTick(() => {
       const el = document.getElementById(`scroll-page-${clamped}`)
       el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -457,7 +457,8 @@ function handleKeydown(e: KeyboardEvent) {
 // along the top edge of the scroll container and keeps the pages that cross it, whatever their
 // height, loaded or not. At the very bottom the last page is the current one, it may be too
 // short to ever reach the top. While a jump scrolls to its page the pages it passes are not
-// taken, the jump has set the current page already.
+// taken, the jump has set the current page already. Where the jump comes to rest without its
+// page in view, because the wheel took over on the way, the page is the one at the top again.
 
 const JUMP_SETTLE_MS = 150
 
@@ -465,11 +466,13 @@ const JUMP_SETTLE_MS = 150
 const pagesAtTop = new Set<number>()
 let scrollPageObserver: IntersectionObserver | undefined
 let jumping = false
+let jumpTarget = 0
 let jumpTimer: ReturnType<typeof setTimeout> | undefined
 
-/** Pass on the scrolling of a jump, until it has come to rest */
-function startJump() {
+/** Pass on the scrolling of a jump to page `index`, until it has come to rest */
+function startJump(index: number) {
   jumping = true
+  jumpTarget = index
   // a jump to where the container already is scrolls nothing, the timer ends it then too
   settleJump()
 }
@@ -478,6 +481,12 @@ function settleJump() {
   clearTimeout(jumpTimer)
   jumpTimer = setTimeout(() => {
     jumping = false
+    const container = scrollContainerRef.value
+    const target = document.getElementById(`scroll-page-${jumpTarget}`)
+    if (!container || !target) return
+    const view = container.getBoundingClientRect()
+    const page = target.getBoundingClientRect()
+    if (page.bottom <= view.top || page.top >= view.bottom) updateScrollIndex()
   }, JUMP_SETTLE_MS)
 }
 
