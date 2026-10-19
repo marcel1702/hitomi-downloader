@@ -7,6 +7,7 @@ import { useMessage } from 'naive-ui'
 import DownloadButton from '../components/DownloadButton.vue'
 import ComicCard from '../components/ComicCard.vue'
 import { useRevealPath } from '../composables/useRevealPath.ts'
+import { isWeb } from '../platform.ts'
 import { useDeleteComics } from '../composables/useDeleteComics.ts'
 
 const { t } = useI18n()
@@ -73,9 +74,14 @@ async function reloadRelatedComics() {
   await Promise.all(promises)
 }
 
-const { revealPath, revealLabel } = useRevealPath()
+const { revealPath } = useRevealPath()
 
-async function showComicDownloadDirInFileManager() {
+// the path of the comic on the server, shown in a dialog of the web version
+const shownPath = ref<string>()
+const pathDialogShowing = ref(false)
+
+/** Open the folder of the comic in the file manager, the web version shows its path */
+async function showComicDownloadDir() {
   if (store.pickedComic === undefined || store.config === undefined) {
     return
   }
@@ -87,7 +93,18 @@ async function showComicDownloadDirInFileManager() {
     return
   }
 
+  if (isWeb) {
+    shownPath.value = comicDownloadDir
+    pathDialogShowing.value = true
+    return
+  }
   await revealPath(comicDownloadDir)
+}
+
+// the whole path is selected at once, ready to be copied
+function selectAll(event: FocusEvent) {
+  const input = event.target as HTMLTextAreaElement
+  input.select()
 }
 </script>
 
@@ -125,21 +142,20 @@ async function showComicDownloadDirInFileManager() {
           </div>
         </div>
         <div class="flex flex-col gap-row-2">
-          <n-button v-if="store.pickedComic.isDownloaded" size="small" @click="showComicDownloadDirInFileManager">
-            {{ revealLabel }}
-          </n-button>
-          <n-button v-if="store.pickedComic.isDownloaded" size="small" type="error" @click="deleteComics([store.pickedComic])">
-            {{ t('delete.button') }}
-          </n-button>
           <n-button size="small" type="info" @click="store.currentTabName = 'reader'">
             {{ t('comic_pane.read') }}
           </n-button>
           <download-button
-            class="mt-auto"
             size="small"
             type="primary"
             :comic-id="store.pickedComic.id"
             :comic-downloaded="store.pickedComic.isDownloaded === true" />
+          <n-button v-if="store.pickedComic.isDownloaded" size="small" type="error" @click="deleteComics([store.pickedComic])">
+            {{ t('delete.button') }}
+          </n-button>
+          <n-button v-if="store.pickedComic.isDownloaded" size="small" @click="showComicDownloadDir">
+            {{ isWeb ? t('comic_pane.show_path') : t('common.open_directory') }}
+          </n-button>
         </div>
       </div>
     </div>
@@ -244,4 +260,25 @@ async function showComicDownloadDirInFileManager() {
       </div>
     </div>
   </div>
+  <n-modal v-model:show="pathDialogShowing">
+    <n-dialog :showIcon="false" :title="t('comic_pane.path_dialog_title')" @close="pathDialogShowing = false">
+      <!-- wrapped, so that a long path is seen whole -->
+      <n-input
+        class="path font-mono"
+        type="textarea"
+        :value="shownPath"
+        :autosize="{ minRows: 1 }"
+        size="small"
+        readonly
+        autofocus
+        @focus="selectAll" />
+    </n-dialog>
+  </n-modal>
 </template>
+
+<style scoped>
+/* a path has few spaces, it breaks anywhere */
+.path :deep(textarea) {
+  word-break: break-all;
+}
+</style>

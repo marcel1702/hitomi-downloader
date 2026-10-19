@@ -220,6 +220,17 @@ async function showConfigInFileManager() {
             </n-input-group>
           </template>
         </n-tooltip>
+        <!-- the folders of the web version are volumes of the server, fixed by its environment -->
+        <template v-if="isWeb">
+          <n-input-group>
+            <n-input-group-label size="small">{{ t('common.download_directory') }}</n-input-group-label>
+            <n-input :value="store.config.downloadDir" size="small" readonly />
+          </n-input-group>
+          <n-input-group>
+            <n-input-group-label size="small">{{ t('common.export_directory') }}</n-input-group-label>
+            <n-input :value="store.config.exportDir" size="small" readonly />
+          </n-input-group>
+        </template>
         <!-- the config of the web version is in the config volume of the server -->
         <n-button v-if="!isWeb" class="ml-auto mt-2" size="small" @click="showConfigInFileManager">
           {{ t('settings_dialog.open_config_directory') }}

@@ -9,9 +9,6 @@
     "language": "Sprache",
     "tag": "Tag",
     "open_directory": "Ordner öffnen",
-    "copy_path": "Pfad kopieren",
-    "path_copied": "Pfad kopiert: {path}",
-    "path_on_server": "Pfad auf dem Server: {path}",
     "export_pdf": "Als PDF exportieren",
     "export_cbz": "Als CBZ exportieren",
     "download_pdf": "Als PDF herunterladen",
@@ -166,7 +163,9 @@
     "empty_description": "Bitte wähle einen Comic aus (@:search_pane.name @:downloaded_pane.name)",
     "related": "Ähnliche Comics",
     "read": "Lesen",
-    "no_download_dir": "Für diesen Comic ist kein Download-Ordner bekannt"
+    "no_download_dir": "Für diesen Comic ist kein Download-Ordner bekannt",
+    "show_path": "Pfad anzeigen",
+    "path_dialog_title": "Pfad auf dem Server"
   },
   "reader_pane": {
     "name": "Leser",

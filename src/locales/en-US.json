@@ -9,9 +9,6 @@
     "language": "Language",
     "tag": "Tag",
     "open_directory": "Open Folder",
-    "copy_path": "Copy Path",
-    "path_copied": "Path copied: {path}",
-    "path_on_server": "Path on the server: {path}",
     "export_pdf": "Export PDF",
     "export_cbz": "Export CBZ",
     "download_pdf": "Download PDF",
@@ -166,7 +163,9 @@
     "empty_description": "Please select a comic (@:search_pane.name @:downloaded_pane.name)",
     "related": "Related Comics",
     "read": "Read",
-    "no_download_dir": "No download folder is known for this comic"
+    "no_download_dir": "No download folder is known for this comic",
+    "show_path": "Show Path",
+    "path_dialog_title": "Path on the server"
   },
   "reader_pane": {
     "name": "Reader",

@@ -6,7 +6,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { useStore } from '../store.ts'
 import ComicCard from '../components/ComicCard.vue'
 import { useI18n } from '../utils.ts'
-import { PhChecks, PhFilePdf, PhFileZip, PhTrash } from '@phosphor-icons/vue'
+import { PhChecks, PhFilePdf, PhFileZip, PhFolderOpen, PhTrash } from '@phosphor-icons/vue'
 import { SelectionArea } from '@viselect/vue'
 import { useMultiSelect } from '../composables/useMultiSelect.ts'
 import { useRevealPath } from '../composables/useRevealPath.ts'
@@ -132,7 +132,7 @@ function useProgressTracking() {
   })
 }
 
-const { revealPath, revealLabel, RevealIcon } = useRevealPath()
+const { revealPath } = useRevealPath()
 
 async function selectExportDir() {
   // the export dir of the web version is a volume of the server
@@ -308,16 +308,17 @@ function useContextMenu() {
 </script>
 
 <template>
-  <div v-if="store.config !== undefined" class="h-full flex flex-col gap-2">
-    <n-input-group class="box-border px-2 pt-2">
+  <div v-if="store.config !== undefined" class="h-full flex flex-col gap-2 box-border pt-2">
+    <!-- the export folder of the web version is a volume of the server, the settings show it -->
+    <n-input-group v-if="!isWeb" class="box-border px-2">
       <n-input-group-label size="small">
         {{ t('common.export_directory') }}
       </n-input-group-label>
       <n-input v-model:value="store.config.exportDir" size="small" readonly @click="selectExportDir" />
-      <n-button class="w-9" size="small" :title="revealLabel" @click="showExportDirInFileManager">
+      <n-button class="w-9" size="small" :title="t('common.open_directory')" @click="showExportDirInFileManager">
         <template #icon>
           <n-icon size="20">
-            <component :is="RevealIcon" />
+            <PhFolderOpen />
           </n-icon>
         </template>
       </n-button>
