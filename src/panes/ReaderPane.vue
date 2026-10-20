@@ -20,6 +20,7 @@ import {
   PhQuestion,
 } from '@phosphor-icons/vue'
 import { useI18n } from '../utils.ts'
+import { useDevice } from '../composables/useDevice.ts'
 
 const { t } = useI18n()
 const store = useStore()
@@ -30,6 +31,7 @@ type FitMode = 'page' | 'width' | 'height' | 'original'
 
 const FIT_MODES: FitMode[] = ['page', 'width', 'height', 'original']
 
+const { touch } = useDevice()
 const currentIndex = ref(0)
 const currentImage = ref<string | undefined>(undefined)
 const loading = ref(false)
@@ -470,6 +472,8 @@ function drawnPageRect(): { left: number; top: number; width: number; height: nu
  * back on the left of it and forward on the right.
  */
 function handlePageClick(e: MouseEvent) {
+  // the end of a swipe, which has turned the page already
+  if (performance.now() - swipedAt < SWIPE_CLICK_MS) return
   const area = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const page = fullscreen.value ? drawnPageRect() : undefined
   if (page === undefined) {
@@ -488,6 +492,43 @@ function handlePageClick(e: MouseEvent) {
   if (x < 1 / 3) prevPage()
   else if (x > 2 / 3) nextPage()
   else toggleToolbar()
+}
+
+// A swipe in the page mode turns the page: the finger to the left goes forward, as a book does.
+// Only a page that fits the width is swiped, a wider one is moved sideways by the finger, and
+// neither two fingers nor a zoomed in page turn it.
+const SWIPE_MIN_PX = 50
+const SWIPE_MAX_MS = 800
+const SWIPE_CLICK_MS = 400
+let swipeStart: { x: number; y: number; at: number } | undefined
+let swipedAt = -Infinity
+
+function handleTouchStart(e: TouchEvent) {
+  const area = e.currentTarget as HTMLElement
+  const zoomed = (window.visualViewport?.scale ?? 1) > 1.01
+  const wider = area.scrollWidth > area.clientWidth + 1
+  swipeStart =
+    e.touches.length === 1 && !zoomed && !wider
+      ? { x: e.touches[0].clientX, y: e.touches[0].clientY, at: performance.now() }
+      : undefined
+}
+
+function cancelSwipe() {
+  swipeStart = undefined
+}
+
+function handleTouchEnd(e: TouchEvent) {
+  const start = swipeStart
+  swipeStart = undefined
+  if (start === undefined || e.changedTouches.length !== 1) return
+  const dx = e.changedTouches[0].clientX - start.x
+  const dy = e.changedTouches[0].clientY - start.y
+  if (performance.now() - start.at > SWIPE_MAX_MS) return
+  // mostly sideways, a page scrolled up or down is no swipe
+  if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy) * 1.5) return
+  swipedAt = performance.now()
+  if (dx < 0) nextPage()
+  else prevPage()
 }
 
 // One page for each step of a mouse wheel. A trackpad sends many small steps, they are added up
@@ -612,7 +653,14 @@ function backToComic() {
   store.currentTabName = 'comic'
 }
 
-const shortcuts = computed(() => [
+// a finger has no keys and no wheel, its list is the taps and the swipe
+const touchGestures = computed(() => [
+  { keys: t('reader_pane.swipe'), action: t('reader_pane.swipe_action'), mouse: true },
+  { keys: t('reader_pane.tap_sides'), action: t('reader_pane.click_sides_action'), mouse: true },
+  { keys: t('reader_pane.tap_middle'), action: t('reader_pane.click_middle_action'), mouse: true },
+])
+
+const keysAndMouse = computed(() => [
   { keys: '→  ↓  Space', action: t('reader_pane.shortcut_next') },
   { keys: '←  ↑', action: t('reader_pane.shortcut_prev') },
   { keys: 'Home  End', action: t('reader_pane.shortcut_first_last') },
@@ -630,6 +678,8 @@ const shortcuts = computed(() => [
   { keys: t('reader_pane.click_middle'), action: t('reader_pane.click_middle_action'), mouse: true },
   { keys: t('reader_pane.wheel'), action: t('reader_pane.wheel_action'), mouse: true },
 ])
+
+const shortcuts = computed(() => (touch.value ? touchGestures.value : keysAndMouse.value))
 
 // ---- Keys
 
@@ -909,7 +959,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- in fullscreen the reader leaves the tabs and lies over the whole app -->
+  <!-- in fullscreen the reader leaves the tabs and lies over the whole app. Only the mouse wakes
+       the toolbar: a tap sends a mouse move too, which would show it after every page. -->
   <Teleport to="body" :disabled="!fullscreen">
     <div
       :class="[
@@ -918,7 +969,7 @@ onUnmounted(() => {
         fullscreen && idle ? 'cursor-none' : '',
       ]"
       tabindex="0"
-      @mousemove="wake">
+      @pointermove="(e: PointerEvent) => e.pointerType === 'mouse' && wake()">
       <!-- Toolbar -->
       <!-- in fullscreen it lies over the page and fades, so that the page does not move -->
       <div
@@ -927,8 +978,8 @@ onUnmounted(() => {
           fullscreen ? 'absolute top-0 inset-x-0 bg-opacity-90 transition-opacity duration-200' : '',
           fullscreen && !toolbarShowing ? 'opacity-0 pointer-events-none' : '',
         ]"
-        @mouseenter="setPointerOnToolbar(true)"
-        @mouseleave="setPointerOnToolbar(false)">
+        @pointerenter="(e: PointerEvent) => e.pointerType === 'mouse' && setPointerOnToolbar(true)"
+        @pointerleave="(e: PointerEvent) => e.pointerType === 'mouse' && setPointerOnToolbar(false)">
         <n-button size="small" :color="buttonColor(false)" text-color="#fff" @click="prevPage" :disabled="currentIndex <= 0 && !endShowing">
           <template #icon><n-icon size="18"><PhCaretLeft weight="bold" /></n-icon></template>
         </n-button>
@@ -998,7 +1049,10 @@ onUnmounted(() => {
         ref="pageContainerRef"
         :class="['flex-1 flex relative p-2', fitMode === 'page' ? 'overflow-hidden' : 'overflow-auto']"
         @click="handlePageClick"
-        @wheel="handleWheel">
+        @wheel="handleWheel"
+        @touchstart.passive="handleTouchStart"
+        @touchend.passive="handleTouchEnd"
+        @touchcancel.passive="cancelSwipe">
         <div v-if="loading" class="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
           <n-spin />
         </div>
@@ -1082,7 +1136,7 @@ onUnmounted(() => {
         data-reader-overlay="help"
         @click.self="helpShowing = false">
         <div class="max-h-[90%] overflow-auto rounded-lg bg-gray-800 px-5 py-4 text-white text-sm shadow-lg">
-          <div class="mb-2 text-base font-bold">{{ t('reader_pane.shortcuts_title') }}</div>
+          <div class="mb-2 text-base font-bold">{{ touch ? t('reader_pane.gestures_title') : t('reader_pane.shortcuts_title') }}</div>
           <table>
             <tbody>
               <tr v-for="shortcut in shortcuts" :key="shortcut.keys">
