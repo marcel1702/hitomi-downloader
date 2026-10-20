@@ -12,6 +12,7 @@ on:
       - .hadolint.yaml
       - docker/**
       - docker-compose.yml
+      - docker-compose.dev.yml
       - .env.example
       - crates/**
       - src/**
@@ -76,6 +77,13 @@ jobs:
           got=$(docker compose config --format json | jq -r '.services["hitomi-downloader"].environment.HITOMI_PASSWORD_HASH')
           got=${got//\$\$/\$}
           test "$got" = "$hash" || { echo "the hash arrived as '$got'" >&2; exit 1; }
+          # The file that builds the image from the checkout takes everything else from the one
+          # above, and has to keep building instead of pulling
+          docker compose -f docker-compose.dev.yml config --quiet
+          dev=$(docker compose -f docker-compose.dev.yml config --format json)
+          test "$(jq -r '.services["hitomi-downloader"].pull_policy' <<< "$dev")" = build
+          test "$(jq -r '.services["hitomi-downloader"].build.dockerfile' <<< "$dev")" = Dockerfile
+          test "$(jq -r '.services["hitomi-downloader"].environment.HITOMI_CONFIG_DIR' <<< "$dev")" = /data/config
           # Without a login, a hash, a library or an export folder the compose file refuses, saying
           # what is missing.
           # Compose names only one of several missing variables, in no fixed order, so one is

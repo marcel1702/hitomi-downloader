@@ -1,0 +1,28 @@
+# hitomi-downloader (the web version), built from this checkout instead of a release
+#
+#   cp .env.example .env      then fill in .env
+#   docker compose -f docker-compose.dev.yml up -d --build
+#
+# Everything comes from docker-compose.yml, only the image is different: it is built from the
+# Dockerfile of this checkout on every start, so it is always the state of the branch it was
+# checked out from, whatever the last release is. The build compiles the server and the frontend,
+# it takes a while and wants a few GB of memory.
+#
+# The project name of this file (the folder or the stack name) decides the name of the config
+# volume. A stack of its own name has its own config, logins, queue and followed searches. Give it
+# its own LIBRARY_PATH, EXPORT_PATH and HITOMI_PORT when it runs next to a release.
+
+services:
+  hitomi-downloader:
+    extends:
+      file: docker-compose.yml
+      service: hitomi-downloader
+    image: hitomi-downloader:dev
+    build:
+      context: .
+    # build on every `up`, never pull: the image exists nowhere but here
+    pull_policy: build
+    container_name: hitomi-downloader-dev
+
+volumes:
+  hitomi-config:
