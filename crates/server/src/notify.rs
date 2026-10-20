@@ -284,6 +284,7 @@ struct Words {
     failed_body: &'static str,
     found_body: &'static str,
     more: fn(usize) -> String,
+    /// with the name of the app in it, `{app}`
     test_title: &'static str,
     test_body: &'static str,
 }
@@ -314,8 +315,8 @@ const ENGLISH: Words = Words {
     failed_body: "The downloads tab of the web version has them, to try again.",
     found_body: "They are downloading.",
     more: |n| format!("and {n} more"),
-    test_title: "hitomi-downloader: test",
-    test_body: "If this arrived, the notifications of hitomi-downloader work.",
+    test_title: "{app}: test",
+    test_body: "If this arrived, the notifications of {app} work.",
 };
 
 const GERMAN: Words = Words {
@@ -344,9 +345,8 @@ const GERMAN: Words = Words {
     failed_body: "Im Download-Tab der Web-Version lassen sie sich erneut versuchen.",
     found_body: "Sie werden heruntergeladen.",
     more: |n| format!("und {n} weitere"),
-    test_title: "hitomi-downloader: Test",
-    test_body:
-        "Wenn das angekommen ist, funktionieren die Benachrichtigungen von hitomi-downloader.",
+    test_title: "{app}: Test",
+    test_body: "Wenn das angekommen ist, funktionieren die Benachrichtigungen von {app}.",
 };
 
 fn words(language: &str) -> &'static Words {
@@ -432,11 +432,21 @@ pub fn messages(happened: &[Happened], censored: bool, language: &str) -> Vec<Me
     messages
 }
 
-fn test_message(language: &str) -> Message {
+/// The name of the app in a message, censored only the short one that says less
+fn app_name(censored: bool) -> &'static str {
+    if censored {
+        "hi-dl"
+    } else {
+        "hitomi-downloader"
+    }
+}
+
+fn test_message(language: &str, censored: bool) -> Message {
     let words = words(language);
+    let app = app_name(censored);
     Message {
-        title: words.test_title.to_string(),
-        body: words.test_body.to_string(),
+        title: words.test_title.replace("{app}", app),
+        body: words.test_body.replace("{app}", app),
         kind: "info",
     }
 }
@@ -591,7 +601,7 @@ async fn test_notify(
     let language = state.context.config().read().language.clone();
     state
         .notifier
-        .send(&settings, &test_message(&language))
+        .send(&settings, &test_message(&language, settings.censored))
         .await
         .map(Json)
         .map_err(|err| api_error(StatusCode::BAD_GATEWAY, &err))
@@ -675,6 +685,32 @@ mod tests {
     }
 
     #[test]
+    fn censored_the_app_is_only_hi_dl() {
+        for language in ["en-US", "de-DE"] {
+            let censored = test_message(language, true);
+            let text = format!("{} {}", censored.title, censored.body);
+            assert!(text.contains("hi-dl") && !text.contains("hitomi"), "{text}");
+            let open = test_message(language, false);
+            assert!(
+                open.title.starts_with("hitomi-downloader:"),
+                "{}",
+                open.title
+            );
+        }
+        // the messages of the downloads never named the app, censored or not
+        let happened = [
+            completed("A"),
+            Happened::Followed {
+                query: "q".into(),
+                count: 1,
+            },
+        ];
+        for message in messages(&happened, true, "en-US") {
+            assert!(!format!("{} {}", message.title, message.body).contains("hitomi"));
+        }
+    }
+
+    #[test]
     fn a_long_list_is_cut_and_counted() {
         let happened: Vec<Happened> = (1..=13).map(|n| completed(&format!("T{n}"))).collect();
         let message = &messages(&happened, false, "en-US")[0];
@@ -753,7 +789,7 @@ mod tests {
         let (url, seen) = fake_apprise(StatusCode::OK).await;
         let (notifier, _) = Notifier::open(temp_file());
         notifier
-            .send(&settings(&url), &test_message("en-US"))
+            .send(&settings(&url), &test_message("en-US", false))
             .await
             .unwrap();
         let body = seen.lock()[0].clone();
@@ -767,7 +803,7 @@ mod tests {
         let (url, _) = fake_apprise(StatusCode::FAILED_DEPENDENCY).await;
         let (notifier, _) = Notifier::open(temp_file());
         let err = notifier
-            .send(&settings(&url), &test_message("en-US"))
+            .send(&settings(&url), &test_message("en-US", false))
             .await
             .unwrap_err();
         assert!(
@@ -775,7 +811,10 @@ mod tests {
             "{err:#}"
         );
         let err = notifier
-            .send(&settings("http://127.0.0.1:9"), &test_message("en-US"))
+            .send(
+                &settings("http://127.0.0.1:9"),
+                &test_message("en-US", false),
+            )
             .await
             .unwrap_err();
         assert!(format!("{err:#}").contains("can not be reached"), "{err:#}");
@@ -784,7 +823,7 @@ mod tests {
             ..settings(&url)
         };
         let err = notifier
-            .send(&empty, &test_message("en-US"))
+            .send(&empty, &test_message("en-US", false))
             .await
             .unwrap_err();
         assert!(format!("{err:#}").contains("No Apprise URL"), "{err:#}");
