@@ -99,14 +99,15 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 # anonymous volume that is lost unnoticed. Library and export are open to everyone only inside
 # the image, so that a named volume, which copies this, can be written by any PUID. A bind mount
 # has the permissions of its directory on the host.
-RUN mkdir -p /config /data/library /data/export \
+RUN mkdir -p /data/config /data/library /data/export \
  && chmod 0777 /data/library /data/export
 
-# Where the library and the export are is up to the owner, set HITOMI_LIBRARY_DIR and
-# HITOMI_EXPORT_DIR to mount them anywhere. /data/... is only what they default to.
+# All data lies below /data: the config, the library and the export. Where they are is still up to
+# the owner, HITOMI_CONFIG_DIR, HITOMI_LIBRARY_DIR and HITOMI_EXPORT_DIR mount them anywhere,
+# /data/... is only what they default to.
 ENV HITOMI_HOST=0.0.0.0 \
     HITOMI_PORT=8080 \
-    HITOMI_CONFIG_DIR=/config \
+    HITOMI_CONFIG_DIR=/data/config \
     HITOMI_LIBRARY_DIR=/data/library \
     HITOMI_EXPORT_DIR=/data/export \
     HITOMI_WEB_DIR=/app/web \

@@ -44,7 +44,7 @@ if [ "$(id -u)" != 0 ]; then
     exec "$@"
 fi
 
-CONFIG_DIR="${HITOMI_CONFIG_DIR:-/config}"
+CONFIG_DIR="${HITOMI_CONFIG_DIR:-/data/config}"
 [ -z "$prepare" ] || mkdir -p "$CONFIG_DIR"
 
 if [ "$PUID" = 0 ]; then

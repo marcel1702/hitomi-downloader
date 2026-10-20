@@ -97,7 +97,7 @@ All of them are environment variables. The login has no default: **the server do
 | `HITOMI_USERNAME`, `HITOMI_PASSWORD_HASH` | The login. `HITOMI_PASSWORD` (plain) works too, less safe |
 | `HITOMI_LIBRARY_DIR` | Where the downloads go, a directory that is mounted into the container. Default `/data/library`, any path will do |
 | `HITOMI_EXPORT_DIR` | Where "Export to server" writes, default `/data/export`. Not inside the library |
-| `HITOMI_CONFIG_DIR` | `config.json`, the logins, the logs, the download queue (`queue.json`), the followed searches (`subscriptions.json`) and the pages of running downloads, default `/config` |
+| `HITOMI_CONFIG_DIR` | `config.json`, the logins, the logs, the download queue (`queue.json`), the followed searches (`subscriptions.json`) and the pages of running downloads, default `/data/config` in the image |
 | `PUID`, `PGID`, `UMASK` | The user and group the files belong to (default `1000:1000`), and their rights (default `022`) |
 | `TZ` | Time zone of the logs |
 | `HITOMI_HOST`, `HITOMI_PORT` | The address and port the server listens on, default `127.0.0.1:8080`. The image listens on `0.0.0.0:8080`, and `HITOMI_PORT` in the `.env` of the compose file is the port on the Docker host |
@@ -228,6 +228,11 @@ docker volume rm hitomi-downloader_hitomi-export
 ```
 
 The config stays in the volume `hitomi-config`, the compose file only mounts it at `/data/config` now.
+
+The image itself keeps its config in `/data/config` too, as of the release after 1.3.2 (it was `/config`). With
+the compose file nothing changes. A container started with `docker run -v …:/config` has to mount that volume
+at `/data/config` now, or set `HITOMI_CONFIG_DIR=/config`: otherwise the server refuses to start, because
+nothing is mounted where it looks.
 
 ## 📄 What a download looks like
 
