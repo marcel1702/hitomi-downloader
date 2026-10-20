@@ -15,9 +15,13 @@ dist
 dist-web
 src-tauri/gen
 
-# only the logo of the About dialog of the desktop app's icons is part of the image, see the Dockerfile
+# of the desktop app's icons only the PNGs the frontend uses are part of the image, see the Dockerfile
 src-tauri/icons/*
+!src-tauri/icons/32x32.png
+!src-tauri/icons/64x64.png
 !src-tauri/icons/128x128.png
+!src-tauri/icons/128x128@2x.png
+!src-tauri/icons/icon.png
 
 # local state and documentation
 *.md
