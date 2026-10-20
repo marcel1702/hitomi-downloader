@@ -207,7 +207,8 @@ e-mail and the other services of [Apprise](https://github.com/caronc/apprise/wik
    for example `discord://WebhookID/Token` or `tgram://BotToken/ChatID`. They go along with every message to the
    stateless `POST /notify/` of the Apprise server, which stores nothing of them.
 3. What is told: **Download finished**, **Download failed**, **New galleries from followed searches**.
-4. **Censor the messages**: they only say how many, never the titles of the comics or the followed searches.
+4. **Censor the messages**: they only say how many, never the titles of the comics or the followed searches,
+   and the test message calls the app only `hi-dl`.
 5. **Send Test**, then **Save**.
 
 What happens close together is one message per kind, *"12 comics downloaded"* with the first ten titles: it goes
