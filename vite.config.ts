@@ -1,4 +1,6 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
+// @ts-expect-error node has no types in this project, as for process below
+import { readFileSync } from 'node:fs'
 import vue from '@vitejs/plugin-vue'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
@@ -27,6 +29,37 @@ const webAliases = [
 
 const rustDirs = ['**/src-tauri/**', '**/crates/**', '**/target/**']
 
+// The icon of the app for the browser: favicon, home screen and web app manifest. They are the
+// icons of the desktop app in `src-tauri/icons`, served under `/icons` and copied there by the
+// build, so that there is one set of them.
+const appIcons: Record<string, string> = {
+  'icon-32.png': '32x32.png',
+  'icon-64.png': '64x64.png',
+  'icon-256.png': '128x128@2x.png',
+  'icon-512.png': 'icon.png',
+}
+const appIconsDir = 'src-tauri/icons'
+
+function appIconsPlugin(): Plugin {
+  return {
+    name: 'app-icons',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const name = (request as { url?: string }).url?.match(/^\/icons\/([^/?]+)/)?.[1]
+        const source = name === undefined ? undefined : appIcons[name]
+        if (source === undefined) return next()
+        response.setHeader('Content-Type', 'image/png')
+        response.end(readFileSync(`${appIconsDir}/${source}`))
+      })
+    },
+    generateBundle() {
+      for (const name of Object.keys(appIcons)) {
+        this.emitFile({ type: 'asset', fileName: `icons/${name}`, source: readFileSync(`${appIconsDir}/${appIcons[name]}`) })
+      }
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(async ({ mode }) => ({
   resolve: {
@@ -52,6 +85,7 @@ export default defineConfig(async ({ mode }) => ({
     Components({
       resolvers: [NaiveUiResolver()],
     }),
+    appIconsPlugin(),
   ],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

@@ -166,6 +166,8 @@ if [ -n "${EXPECT_VERSION:-}" ]; then
 fi
 
 check_equals "a page without a login redirects to the login" 303 "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")"
+check_equals "the web app manifest needs no login" 200 "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/manifest.webmanifest")"
+check_equals "the app icon needs no login" 200 "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/icons/icon-32.png")"
 check_equals "the API without a login answers 401" 401 "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/get_config")"
 check_equals "a wrong password is refused" 401 "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' "$BASE/auth/login" -d '{"username":"smoke","password":"wrong"}')"
 check_equals "the right password logs in" 200 "$(login_cookie main)"
