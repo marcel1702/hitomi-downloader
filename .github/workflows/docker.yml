@@ -67,21 +67,23 @@ jobs:
           set -eu
           hash='$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aGFzaGhhc2hoYXNoaGFzaA'
           {
-            grep -vE '^(HITOMI_PASSWORD_HASH|LIBRARY_PATH)=' .env.example
+            grep -vE '^(HITOMI_PASSWORD_HASH|LIBRARY_PATH|EXPORT_PATH)=' .env.example
             printf "HITOMI_PASSWORD_HASH='%s'\n" "$hash"
             echo "LIBRARY_PATH=$RUNNER_TEMP"
+            echo "EXPORT_PATH=$RUNNER_TEMP"
           } > .env
           docker compose config --quiet
           got=$(docker compose config --format json | jq -r '.services["hitomi-downloader"].environment.HITOMI_PASSWORD_HASH')
           got=${got//\$\$/\$}
           test "$got" = "$hash" || { echo "the hash arrived as '$got'" >&2; exit 1; }
-          # Without a login, a hash or a library the compose file refuses, saying what is missing.
+          # Without a login, a hash, a library or an export folder the compose file refuses, saying
+          # what is missing.
           # Compose names only one of several missing variables, in no fixed order, so one is
           # left out at a time.
           missing() {
             name=$1
             assignments=()
-            for pair in HITOMI_USERNAME=admin HITOMI_PASSWORD_HASH=hash "LIBRARY_PATH=$RUNNER_TEMP"; do
+            for pair in HITOMI_USERNAME=admin HITOMI_PASSWORD_HASH=hash "LIBRARY_PATH=$RUNNER_TEMP" "EXPORT_PATH=$RUNNER_TEMP"; do
               [ "${pair%%=*}" = "$name" ] || assignments+=("$pair")
             done
             if env -i PATH="$PATH" HOME="$HOME" "${assignments[@]}" docker compose --env-file /dev/null config > /dev/null 2> "$RUNNER_TEMP/compose-error"; then
@@ -89,7 +91,7 @@ jobs:
             fi
             grep -q "$name" "$RUNNER_TEMP/compose-error" || { echo "no word of $name in:" >&2; cat "$RUNNER_TEMP/compose-error" >&2; exit 1; }
           }
-          for name in HITOMI_USERNAME HITOMI_PASSWORD_HASH LIBRARY_PATH; do missing "$name"; done
+          for name in HITOMI_USERNAME HITOMI_PASSWORD_HASH LIBRARY_PATH EXPORT_PATH; do missing "$name"; done
 
   image:
     name: Image (build and start, amd64)
@@ -121,13 +123,15 @@ jobs:
         run: |
           set -eu
           library="$RUNNER_TEMP/library"
-          mkdir -p "$library"
-          chmod 0777 "$library"
+          export="$RUNNER_TEMP/export"
+          mkdir -p "$library" "$export"
+          chmod 0777 "$library" "$export"
           hash=$(printf 'compose test password\n' | docker run --rm -i hitomi-downloader:ci hash-password)
           {
             echo "HITOMI_USERNAME=admin"
             printf "HITOMI_PASSWORD_HASH='%s'\n" "$hash"
             echo "LIBRARY_PATH=$library"
+            echo "EXPORT_PATH=$export"
             echo "HITOMI_PORT=18080"
           } > .env
           cat > compose.ci.yml << 'EOF'

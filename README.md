@@ -79,7 +79,8 @@ contain the desktop app, there is no GTK or WebKit in it.
 
 1. Make the hash of your password: `docker run --rm -it ghcr.io/marcel1702/hitomi-downloader hash-password`
 2. Copy `.env.example` to `.env` next to [`docker-compose.yml`](docker-compose.yml) and fill it in: the
-   login, the hash, and `LIBRARY_PATH`, the folder on the Docker host where the comics go. Keep the single
+   login, the hash, `LIBRARY_PATH`, the folder on the Docker host where the comics go, and `EXPORT_PATH`, the
+   folder the exports go to (both have to exist, and not one inside the other). Keep the single
    quotes around the hash, they stop Docker Compose from reading its `$` as variables. The optional
    settings of the [table below](#settings) can be made in the same file.
 3. `docker compose up -d`, then open `http://<server>:8080` and log in.
@@ -118,7 +119,7 @@ one thing in another container and another here, and be moved to another mount p
 
 - **Owner and rights.** The files belong to `PUID:PGID`. On an NFS share the numeric ids count, and its
   settings (root squash, a user it maps everyone to) decide who may write. `UMASK` decides whether other users
-  can read what is written. **The library is never `chown`ed**, only `/config` is handed to the user.
+  can read what is written. **The library and the export folder are never `chown`ed**, only the config directory is handed to the user.
 - **Named volumes.** `/data/library` and `/data/export` are open to everyone in the image (`0777`). Docker copies
   that into a new named volume, so any `PUID` can write to it without a `chown`. Only the root folder of the
   volume is open: what the server writes in it has the rights of `UMASK`. A bind mount or a share keeps the
