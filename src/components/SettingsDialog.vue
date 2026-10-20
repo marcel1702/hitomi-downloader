@@ -6,6 +6,7 @@ import { path } from '@tauri-apps/api'
 import { appDataDir } from '@tauri-apps/api/path'
 import { commands } from '../bindings.ts'
 import { isWeb } from '../platform.ts'
+import KavitaSettings from './KavitaSettings.vue'
 
 const { t } = useI18n()
 
@@ -230,6 +231,8 @@ async function showConfigInFileManager() {
             <n-input-group-label size="small">{{ t('common.export_directory') }}</n-input-group-label>
             <n-input :value="store.config.exportDir" size="small" readonly />
           </n-input-group>
+          <!-- a Kavita that reads the library scans it after downloads -->
+          <kavita-settings />
         </template>
         <!-- the config of the web version is in the config volume of the server -->
         <n-button v-if="!isWeb" class="ml-auto mt-2" size="small" @click="showConfigInFileManager">

@@ -14,6 +14,7 @@ declare module 'vue' {
     DownloadButton: typeof import('./src/components/DownloadButton.vue')['default']
     FloatLabelInput: typeof import('./src/components/FloatLabelInput.vue')['default']
     FollowDialog: typeof import('./src/components/FollowDialog.vue')['default']
+    KavitaSettings: typeof import('./src/components/KavitaSettings.vue')['default']
     LogViewer: typeof import('./src/components/LogViewer.vue')['default']
     NA: typeof import('naive-ui')['NA']
     NAlert: typeof import('naive-ui')['NAlert']
