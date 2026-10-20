@@ -232,7 +232,8 @@
   },
   "uncompleted_progresses": {
     "name": "Läuft",
-    "usage_tips": "Mit gedrückter linker Maustaste auswählen, Rechtsklick für das Menü, Doppelklick zum Pausieren/Fortsetzen"
+    "usage_tips": "Mit gedrückter linker Maustaste auswählen, Rechtsklick für das Menü, Doppelklick zum Pausieren/Fortsetzen",
+    "usage_tips_touch": "Antippen zum Auswählen, ⋮ für das Menü zum Pausieren, Fortsetzen oder Abbrechen"
   },
   "completed_progresses": {
     "name": "Abgeschlossen"

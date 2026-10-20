@@ -1,17 +1,25 @@
 <script setup lang="ts">
 // This starter template is using Vue 3 <script setup> SFCs
 // Check out https://vuejs.org/api/sfc-script-setup.html#script-setup
+import { computed } from 'vue'
 import AppContent from './AppContent.vue'
 import { GlobalThemeOverrides } from 'naive-ui'
+import { useDevice } from './composables/useDevice.ts'
 
-const themeOverrides: GlobalThemeOverrides = {
+const { touch } = useDevice()
+
+const themeOverrides = computed<GlobalThemeOverrides>(() => ({
   common: {
     primaryColor: '#6275C0FF',
     primaryColorHover: '#8998CCFF',
     primaryColorPressed: '#465499FF',
     primaryColorSuppl: '#8998CCFF',
+    // for a finger: the controls nearly all use the small size, the theme makes them bigger at once
+    ...(touch.value ? { heightTiny: '32px', heightSmall: '40px', heightMedium: '40px', fontSizeSmall: '15px' } : {}),
   },
-}
+  // the tags of a card are many and stay small, a tap on one still hits it
+  ...(touch.value ? { Tag: { heightSmall: '28px', heightMedium: '28px' } } : {}),
+}))
 </script>
 
 <template>
@@ -34,6 +42,11 @@ const themeOverrides: GlobalThemeOverrides = {
 
 .selection-area {
   @apply bg-[rgba(46,115,252,0.5)];
+}
+
+/* a row of buttons that fits next to each other on a wide screen breaks into lines on a phone */
+[data-narrow] .wrap-on-narrow {
+  flex-wrap: wrap;
 }
 
 /* on a phone the dialogs of the app take the whole screen, the content scrolls inside them */

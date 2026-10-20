@@ -4,7 +4,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useStore } from '../store.ts'
 import ComicCard from './ComicCard.vue'
 import { SelectionArea } from '@viselect/vue'
-import { useMultiSelect } from '../composables/useMultiSelect.ts'
+import { useMultiSelect, SELECTION_OPTIONS } from '../composables/useMultiSelect.ts'
+import ItemMenuButton from './ItemMenuButton.vue'
 import { DropdownOption } from 'naive-ui'
 import { commands } from '../bindings.ts'
 import { PhChecks, PhArrowClockwise } from '@phosphor-icons/vue'
@@ -87,7 +88,7 @@ function useDropdown() {
     },
   ])
 
-  async function showDropdown(e: MouseEvent) {
+  async function showDropdown(e: Pick<MouseEvent, 'clientX' | 'clientY'>) {
     dropdownShowing.value = false
     await nextTick()
     dropdownShowing.value = true
@@ -109,7 +110,7 @@ function useDropdown() {
   <SelectionArea
     ref="selectionAreaRef"
     class="h-full flex flex-col overflow-auto px-2 gap-2 selection-container"
-    :options="{ selectables: '.selectable', features: { deselectOnBlur: true } }"
+    :options="SELECTION_OPTIONS"
     @contextmenu="showDropdown"
     @move="updateSelectedIds"
     @start="unselectAll">
@@ -118,9 +119,10 @@ function useDropdown() {
       :key="comicId"
       ref="selectableRefs"
       :data-key="comicId"
-      :class="['selectable rounded p-[2px]', selectedIds.has(comicId) ? 'selected' : '']"
+      :class="['selectable rounded p-[2px] relative', selectedIds.has(comicId) ? 'selected' : '']"
       @contextmenu="() => onContextMenu(comicId)">
       <comic-card :search="search" :comic="progressData.comic" show-export />
+      <item-menu-button @open="(at) => { onContextMenu(comicId); showDropdown(at) }" />
     </div>
     <n-dropdown
       placement="bottom-start"
