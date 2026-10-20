@@ -186,6 +186,11 @@ An image is tagged with its version: `1.2.3`, `1.2`, `1`, and `latest` for the n
 only has its own tag. `docker compose pull && docker compose up -d` updates. To build the image yourself,
 `docker build -t hitomi-downloader .` in this directory.
 
+The repository itself always says `0.0.0-dev`. Only a release gets its number, from its tag: the release
+workflow writes it into `Cargo.toml`, `Cargo.lock`, `src-tauri/tauri.conf.json` and `package.json` before it
+builds (`.github/scripts/set-version.mjs`), nothing of it is committed. Anything built from a checkout, the
+desktop app from `pnpm tauri build` or the image of `docker-compose.dev.yml`, reports `v0.0.0-dev`.
+
 #### The current state of `main` instead of a release
 
 [`docker-compose.dev.yml`](docker-compose.dev.yml) builds the image from the checkout on every start
@@ -195,7 +200,7 @@ file path and redeploys it after a pull. It always runs the branch it checked ou
 is. The build compiles the server and the frontend, it takes a while and a few GB of memory on the Docker
 host. The container is called `hitomi-downloader-dev`, and the stack name decides the name of the config
 volume. Next to a release, give it its own `HITOMI_PORT`, `LIBRARY_PATH` and `EXPORT_PATH`. The About dialog
-shows the version in `Cargo.toml`, a build from a checkout has no release number.
+shows `v0.0.0-dev`, a build from a checkout has no release number.
 
 An older compose file kept the exports in the named volume `hitomi-export`. The current one writes them to
 the folder `EXPORT_PATH` of the host, which has to be set in `.env` before the next `docker compose up`. What

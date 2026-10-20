@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 # Written into the ComicInfo.xml of every download, so the desktop app and the core
 # share one version, which also has to match tauri.conf.json and package.json
-version = "1.0.0"
+version = "0.0.0-dev"
 authors = ["marcel1702 <https://github.com/marcel1702>"]
 edition = "2021"
 license = "MIT"
