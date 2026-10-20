@@ -427,11 +427,16 @@ const fitModeIcons = {
   original: PhNumberSquareOne,
 }
 
-/** The image of the page mode, fitted as `fitMode` says. `m-auto` centers it without cutting off what overflows. */
+/**
+ * The image of the page mode, fitted as `fitMode` says. `m-auto` centers it without cutting off what overflows.
+ *
+ * The whole page fills the reader as far as it can without being cut, made bigger as well as smaller:
+ * the image takes the whole area and `object-contain` fits the page into it.
+ */
 const pageImageClass = computed(() => {
   switch (fitMode.value) {
     case 'page':
-      return 'max-w-full max-h-full'
+      return 'w-full h-full'
     case 'width':
       return 'w-full h-auto flex-shrink-0'
     case 'height':
@@ -775,7 +780,7 @@ function pageStyle(index: number, placeholder: boolean): Record<string, string> 
     if (placeholder) return { width: '100%', height: '600px' }
     switch (fitMode.value) {
       case 'page':
-        return { maxWidth: '100%', maxHeight: `${height}px` }
+        return { width: '100%', height: `${height}px`, objectFit: 'contain' }
       case 'width':
         return { width: '100%' }
       case 'height':
@@ -788,8 +793,8 @@ function pageStyle(index: number, placeholder: boolean): Record<string, string> 
   const size = { aspectRatio: `${file.width} / ${file.height}` }
   switch (fitMode.value) {
     case 'page':
-      // as in page mode, a page is not made bigger than it is
-      return { ...size, width: `${Math.min(file.width, height * ratio)}px`, maxWidth: '100%' }
+      // as in page mode, as big as it fits, bigger or smaller than it is
+      return { ...size, width: `${height * ratio}px`, maxWidth: '100%' }
     case 'width':
       return { ...size, width: '100%' }
     case 'height':
