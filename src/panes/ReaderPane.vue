@@ -450,10 +450,41 @@ const pageImageClass = computed(() => {
 // A page that is bigger than the reader is scrolled from its top, wherever the one before was
 watch(currentImage, () => pageContainerRef.value?.scrollTo(0, 0))
 
-/** A click on the page: the left third goes back, the right third forward, the middle shows or hides the toolbar */
+/** Where the page is drawn on the screen, inside the box of its image that `object-contain` fits it into */
+function drawnPageRect(): { left: number; top: number; width: number; height: number } | undefined {
+  const image = pageContainerRef.value?.querySelector('img')
+  if (!image || image.naturalWidth === 0 || image.naturalHeight === 0) return undefined
+  const box = image.getBoundingClientRect()
+  const scale = Math.min(box.width / image.naturalWidth, box.height / image.naturalHeight)
+  const width = image.naturalWidth * scale
+  const height = image.naturalHeight * scale
+  return { left: box.left + (box.width - width) / 2, top: box.top + (box.height - height) / 2, width, height }
+}
+
+/**
+ * A click in the page mode
+ *
+ * Outside fullscreen the left half of the reader goes back and the right half forward, the toolbar
+ * stays. In fullscreen the page itself counts in thirds: the left one goes back, the middle one
+ * shows or hides the toolbar, the right one goes forward. The free area next to the page goes
+ * back on the left of it and forward on the right.
+ */
 function handlePageClick(e: MouseEvent) {
   const area = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  const x = (e.clientX - area.left) / area.width
+  const page = fullscreen.value ? drawnPageRect() : undefined
+  if (page === undefined) {
+    if (e.clientX < area.left + area.width / 2) prevPage()
+    else nextPage()
+    return
+  }
+  const onPage =
+    e.clientX >= page.left && e.clientX <= page.left + page.width && e.clientY >= page.top && e.clientY <= page.top + page.height
+  if (!onPage) {
+    if (e.clientX < page.left + page.width / 2) prevPage()
+    else nextPage()
+    return
+  }
+  const x = (e.clientX - page.left) / page.width
   if (x < 1 / 3) prevPage()
   else if (x > 2 / 3) nextPage()
   else toggleToolbar()
@@ -500,19 +531,20 @@ function handleWheel(e: WheelEvent) {
 // Only the reader goes fullscreen: it moves out of the tabs, over the whole app, and the window
 // goes fullscreen with it, the browser tab through the Fullscreen API and the desktop app
 // through its Tauri window. In fullscreen the toolbar lies over the page and hides with the
-// pointer when the mouse rests.
+// pointer when the mouse rests, or with a click in the middle of the page or `H`. Outside
+// fullscreen it is always there.
 
 const IDLE_MS = 2000
 
 const fullscreen = ref(false)
-// hidden with a click in the middle of the page
+// hidden in fullscreen, with a click in the middle of the page or `H`
 const toolbarHidden = ref(false)
 // the mouse rested in fullscreen
 const idle = ref(false)
 let idleTimer: ReturnType<typeof setTimeout> | undefined
 let pointerOnToolbar = false
 
-const toolbarShowing = computed(() => !toolbarHidden.value && !(fullscreen.value && idle.value))
+const toolbarShowing = computed(() => !fullscreen.value || (!toolbarHidden.value && !idle.value))
 
 function wake() {
   idle.value = false
@@ -530,6 +562,7 @@ function setPointerOnToolbar(on: boolean) {
 }
 
 function toggleToolbar() {
+  if (!fullscreen.value) return
   if (toolbarShowing.value) {
     toolbarHidden.value = true
   } else {
@@ -543,6 +576,8 @@ async function setFullscreen(on: boolean) {
   // the reader moves in the page, which loses where its scroll mode was, see the watcher below
   startJump(currentIndex.value)
   fullscreen.value = on
+  // fullscreen starts with the toolbar there, until the mouse rests
+  toolbarHidden.value = false
   wake()
   try {
     // called before anything is awaited, the browser only allows it during the key press or click
@@ -587,6 +622,7 @@ const shortcuts = computed(() => [
   { keys: 'M', action: t('reader_pane.shortcut_mode') },
   { keys: 'T', action: t('reader_pane.shortcut_thumbnails') },
   { keys: 'S', action: t('reader_pane.shortcut_slideshow') },
+  { keys: 'H', action: t('reader_pane.shortcut_toolbar') },
   { keys: 'Esc', action: t('reader_pane.shortcut_escape') },
   { keys: '?', action: t('reader_pane.shortcut_help') },
   // the mouse, no keys
@@ -652,6 +688,9 @@ function handleKeydown(e: KeyboardEvent) {
       break
     case 'w':
       nextFitMode()
+      break
+    case 'h':
+      toggleToolbar()
       break
     case 'm':
       toggleMode()
@@ -883,7 +922,6 @@ onUnmounted(() => {
       <!-- Toolbar -->
       <!-- in fullscreen it lies over the page and fades, so that the page does not move -->
       <div
-        v-show="toolbarShowing || fullscreen"
         :class="[
           'flex flex-wrap items-center gap-2 px-3 py-1.5 bg-gray-800 text-white text-sm z-10',
           fullscreen ? 'absolute top-0 inset-x-0 bg-opacity-90 transition-opacity duration-200' : '',
@@ -954,7 +992,7 @@ onUnmounted(() => {
         </n-button>
       </div>
 
-      <!-- Page mode: the left third goes back, the right third forward, the middle shows or hides the toolbar -->
+      <!-- Page mode: a click goes back or forward, in fullscreen the middle of the page shows or hides the toolbar -->
       <div
         v-if="readMode === 'page'"
         ref="pageContainerRef"
