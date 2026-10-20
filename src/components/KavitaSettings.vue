@@ -108,7 +108,6 @@ function clearApiKey() {
         v-model:value="apiKey"
         size="small"
         type="password"
-        show-password-on="click"
         :placeholder="hasApiKey ? t('kavita.api_key_saved') : t('kavita.api_key_placeholder')" />
       <n-button v-if="hasApiKey" size="small" :title="t('kavita.api_key_clear')" @click="clearApiKey">×</n-button>
     </n-input-group>
