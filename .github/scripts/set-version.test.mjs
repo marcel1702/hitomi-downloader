@@ -78,15 +78,20 @@ test('only the workspace crates change in Cargo.lock, never a dependency that sh
   const root = copyOfRepository()
   try {
     const versionsOf = (lock) => [...lock.matchAll(/\[\[package\]\]\nname = "([^"]+)"\nversion = "([^"]+)"/g)].map(([, name, version]) => `${name} ${version}`)
-    const before = versionsOf(read(root, 'Cargo.lock'))
-    setVersion(root, 'v1.0.0')
-    // same version as the repository has, so nothing at all changes
-    assert.deepEqual(versionsOf(read(root, 'Cargo.lock')), before)
+    const changedFrom = (before, version) => {
+      setVersion(root, `v${version}`)
+      const after = versionsOf(read(root, 'Cargo.lock'))
+      return after.filter((entry, index) => entry !== before[index]).sort()
+    }
+    const crates = (version) => WORKSPACE_CRATES.map((crate) => `${crate} ${version}`).sort()
 
-    setVersion(root, 'v99.0.0')
-    const after = versionsOf(read(root, 'Cargo.lock'))
-    const changed = after.filter((entry, index) => entry !== before[index])
-    assert.deepEqual(changed.sort(), WORKSPACE_CRATES.map((crate) => `${crate} 99.0.0`).sort())
+    // 1.0.0 is the version of many dependencies too, they keep it
+    const before = versionsOf(read(root, 'Cargo.lock'))
+    assert.ok(before.filter((entry) => entry.endsWith(' 1.0.0')).length > 0, 'a dependency at 1.0.0 to test with')
+    assert.deepEqual(changedFrom(before, '1.0.0'), crates('1.0.0'))
+
+    // and from there, with the workspace crates sharing that number, only they move on
+    assert.deepEqual(changedFrom(versionsOf(read(root, 'Cargo.lock')), '99.0.0'), crates('99.0.0'))
   } finally {
     rmSync(root, { recursive: true })
   }
