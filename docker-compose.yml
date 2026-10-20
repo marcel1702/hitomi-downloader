@@ -7,6 +7,9 @@
 # directory for the containers: a folder on the Docker host, a named volume, or a folder that
 # is itself an NFS or SMB share mounted on the host.
 
+volumes:
+  hitomi-config:
+
 services:
   hitomi-downloader:
     image: ghcr.io/marcel1702/hitomi-downloader:latest
@@ -19,7 +22,8 @@ services:
     environment:
       TZ: ${TZ:-UTC}
       # Who owns the files that are written, and which rights they get. PUID and PGID have to be
-      # a user the library may be written by (on an NFS share, what its settings allow).
+      # a user the library and the export folder may be written by (on an NFS share, what its
+      # settings allow).
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       UMASK: ${UMASK:-022}
@@ -27,10 +31,11 @@ services:
       # In the .env file the hash is written in single quotes. Written here, in this file, every
       # `$` of it would have to be doubled to `$$`.
       HITOMI_PASSWORD_HASH: "${HITOMI_PASSWORD_HASH:?create the hash with the command docker run --rm -it ghcr.io/marcel1702/hitomi-downloader hash-password}"
-      # Where the library is mounted in this container, any path will do. The exports go to
-      # /data/export, where the image has made a folder every user may write to, so that a new
-      # named volume inherits it.
-      HITOMI_LIBRARY_DIR: /library
+      # Where the data is mounted in this container, any paths will do as long as they match the
+      # targets of the volumes below.
+      HITOMI_CONFIG_DIR: /data/config
+      HITOMI_LIBRARY_DIR: /data/library
+      HITOMI_EXPORT_DIR: /data/export
       # The settings below are made in .env, see .env.example. An empty value counts as not set.
       HITOMI_FOLLOW_INTERVAL_HOURS: ${HITOMI_FOLLOW_INTERVAL_HOURS:-6}
       HITOMI_PUBLIC_URL: ${HITOMI_PUBLIC_URL:-}
@@ -40,19 +45,21 @@ services:
     volumes:
       # config.json, the logins, the logs, the download queue, the followed searches and the pages
       # of running downloads
-      - hitomi-config:/config
+      - hitomi-config:/data/config
       # The library, where the comics are. The long form with create_host_path: false
       # makes the container refuse to start if the source is missing, for example because an NFS
       # share is not mounted. With the short form Docker would make an empty folder on the host
       # and the downloads would go to its local disk without anyone noticing.
       - type: bind
         source: ${LIBRARY_PATH:?set LIBRARY_PATH in .env}
-        target: /library
+        target: /data/library
         bind:
           create_host_path: false
-      # The exports, which must not lie inside the library (a scan of it would list them a second time)
-      - hitomi-export:/data/export
-
-volumes:
-  hitomi-config:
-  hitomi-export:
+      # The exports, mounted the same way. The folder must not lie inside the library on the host
+      # either, a scan of the library would list them a second time. The server only sees the
+      # paths in the container, it can not tell.
+      - type: bind
+        source: ${EXPORT_PATH:?set EXPORT_PATH in .env}
+        target: /data/export
+        bind:
+          create_host_path: false
