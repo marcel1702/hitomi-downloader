@@ -143,7 +143,7 @@ puid=0 pgid=0 umask_value=027
 if [ "$can_switch_user" = 1 ]; then puid=1234 pgid=4321; fi
 library_owner_before=$(stat -c '%u:%g %a' "$WORK/library")
 start "$RUN_ID-main" "${auth_env[@]}" -e PUID=$puid -e PGID=$pgid -e UMASK=$umask_value -e TZ=Europe/Berlin \
-    -v "$WORK/library:/data/library" -v "$WORK/export:/data/export" -v "$WORK/config:/config"
+    -v "$WORK/library:/data/library" -v "$WORK/export:/data/export" -v "$WORK/config:/data/config"
 if wait_healthy "$RUN_ID-main"; then ok "the server starts and answers its healthcheck"; else
     fail "the server starts and answers its healthcheck" "$("$DOCKER" logs "$RUN_ID-main" 2>&1 | tail -5)"
     exit 1
@@ -200,7 +200,7 @@ odd_target="/mnt/Meine Bibliothek ü"
 mkdir -p "$odd_library" "$WORK/config-odd" "$WORK/export-odd"
 chmod 0777 "$odd_library" "$WORK/config-odd" "$WORK/export-odd"
 start "$RUN_ID-odd" "${auth_env[@]}" -e PUID=$puid -e PGID=$pgid -e "HITOMI_LIBRARY_DIR=$odd_target" -e HITOMI_EXPORT_DIR=/somewhere/export \
-    -v "$odd_library:$odd_target" -v "$WORK/config-odd:/config" -v "$WORK/export-odd:/somewhere/export"
+    -v "$odd_library:$odd_target" -v "$WORK/config-odd:/data/config" -v "$WORK/export-odd:/somewhere/export"
 if wait_healthy "$RUN_ID-odd"; then
     ok "a library with a space and an umlaut in its path, at a path the image does not know"
     login_cookie odd > /dev/null
@@ -213,7 +213,7 @@ fi
 echo "--- named volumes, and no bind mount from the host at all"
 VOLUMES+=("$RUN_ID-lib" "$RUN_ID-exp" "$RUN_ID-cfg")
 start "$RUN_ID-named" "${auth_env[@]}" -e PUID=$puid -e PGID=$pgid \
-    -v "$RUN_ID-lib:/data/library" -v "$RUN_ID-exp:/data/export" -v "$RUN_ID-cfg:/config"
+    -v "$RUN_ID-lib:/data/library" -v "$RUN_ID-exp:/data/export" -v "$RUN_ID-cfg:/data/config"
 if wait_healthy "$RUN_ID-named"; then
     ok "it starts with named volumes for the library, the exports and the config"
 else
@@ -225,7 +225,7 @@ echo "--- started as another user with user: / --user"
 mkdir -p "$WORK/user-config" "$WORK/user-library" "$WORK/user-export"
 chmod 0777 "$WORK/user-config" "$WORK/user-library" "$WORK/user-export"
 start "$RUN_ID-user" --user "$(id -u):$(id -g)" "${root_env[@]}" "${auth_env[@]}" \
-    -v "$WORK/user-library:/data/library" -v "$WORK/user-export:/data/export" -v "$WORK/user-config:/config"
+    -v "$WORK/user-library:/data/library" -v "$WORK/user-export:/data/export" -v "$WORK/user-config:/data/config"
 if wait_healthy "$RUN_ID-user"; then
     ok "it starts with --user and without root"
     check_equals "and runs as that user" "$(id -u)" "$("$DOCKER" exec "$RUN_ID-user" sh -c "awk '/^Uid:/ {print \$2}' /proc/1/status")"
@@ -241,7 +241,7 @@ chmod 0555 "$WORK/ro-library"
 uid_for_ro=$puid
 [ "$can_switch_user" = 1 ] || uid_for_ro=
 if [ -n "$uid_for_ro" ]; then
-    run_expecting_failure "$RUN_ID-ro" "${auth_env[@]}" -e PUID=$puid -e PGID=$pgid -v "$WORK/ro-library:/data/library" -v "$WORK/export:/data/export" -v "$WORK/config:/config"
+    run_expecting_failure "$RUN_ID-ro" "${auth_env[@]}" -e PUID=$puid -e PGID=$pgid -v "$WORK/ro-library:/data/library" -v "$WORK/export:/data/export" -v "$WORK/config:/data/config"
     if [ "$EXIT_CODE" != 0 ]; then ok "a library the user can not write stops the start"; else fail "a library the user can not write stops the start" "$OUTPUT"; fi
     check_contains "and says it is not writable" "is not writable" "$OUTPUT"
     check_contains "and names the path" "/data/library" "$OUTPUT"
@@ -258,12 +258,12 @@ run_expecting_failure "$RUN_ID-nosource" "${auth_env[@]}" --mount "type=bind,sou
 if [ "$EXIT_CODE" != 0 ]; then ok "a bind mount whose source is missing stops the container"; else fail "a bind mount whose source is missing stops the container" "$OUTPUT"; fi
 if [ ! -e "$WORK/does-not-exist" ]; then ok "and no folder is made on the host"; else fail "and no folder is made on the host"; fi
 
-run_expecting_failure "$RUN_ID-nologin" -e PUID=$puid -e PGID=$pgid -v "$WORK/library:/data/library" -v "$WORK/export:/data/export" -v "$WORK/config:/config"
+run_expecting_failure "$RUN_ID-nologin" -e PUID=$puid -e PGID=$pgid -v "$WORK/library:/data/library" -v "$WORK/export:/data/export" -v "$WORK/config:/data/config"
 if [ "$EXIT_CODE" != 0 ]; then ok "no login configured stops the start"; else fail "no login configured stops the start" "$OUTPUT"; fi
 check_contains "and says there is no way without one" "never runs without" "$OUTPUT"
 
 run_expecting_failure "$RUN_ID-overlap" "${auth_env[@]}" -e PUID=$puid -e PGID=$pgid -e HITOMI_EXPORT_DIR=/data/library/export \
-    -v "$WORK/library:/data/library" -v "$WORK/config:/config"
+    -v "$WORK/library:/data/library" -v "$WORK/config:/data/config"
 if [ "$EXIT_CODE" != 0 ]; then ok "an export directory inside the library stops the start"; else fail "an export directory inside the library stops the start" "$OUTPUT"; fi
 check_contains "and says why" "inside the library" "$OUTPUT"
 check_equals "and leaves nothing in the library" 0 "$(find "$WORK/library" -mindepth 1 | wc -l)"
