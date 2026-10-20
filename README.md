@@ -186,6 +186,17 @@ An image is tagged with its version: `1.2.3`, `1.2`, `1`, and `latest` for the n
 only has its own tag. `docker compose pull && docker compose up -d` updates. To build the image yourself,
 `docker build -t hitomi-downloader .` in this directory.
 
+An older compose file kept the exports in the named volume `hitomi-export`. The current one writes them to
+the folder `EXPORT_PATH` of the host, which has to be set in `.env` before the next `docker compose up`. What
+the volume holds can be copied over first, then the volume can go (`docker volume ls` shows its full name):
+
+```
+docker run --rm -v hitomi-downloader_hitomi-export:/from -v /path/to/the/exports:/to alpine cp -a /from/. /to/
+docker volume rm hitomi-downloader_hitomi-export
+```
+
+The config stays in the volume `hitomi-config`, the compose file only mounts it at `/data/config` now.
+
 ## 📄 What a download looks like
 
 ```
