@@ -2,7 +2,9 @@
 import { ProgressData } from '../types.ts'
 import { ref, watch, computed, nextTick } from 'vue'
 import { SelectionArea } from '@viselect/vue'
-import { useMultiSelect } from '../composables/useMultiSelect.ts'
+import { useMultiSelect, SELECTION_OPTIONS } from '../composables/useMultiSelect.ts'
+import ItemMenuButton from './ItemMenuButton.vue'
+import { useDevice } from '../composables/useDevice.ts'
 import { commands, DownloadTaskState } from '../bindings.ts'
 import { DropdownOption, NIcon } from 'naive-ui'
 import { useStore } from '../store.ts'
@@ -22,6 +24,7 @@ import { useI18n } from '../utils.ts'
 const { t } = useI18n()
 
 const store = useStore()
+const { touch } = useDevice()
 
 const { selectedIds, selectionAreaRef, selectableRefs, updateSelectedIds, unselectAll, onContextMenu } = useMultiSelect()
 const { dropdownX, dropdownY, dropdownShowing, dropdownOptions, showDropdown } = useDropdown()
@@ -142,7 +145,7 @@ function useDropdown() {
     },
   ])
 
-  async function showDropdown(e: MouseEvent) {
+  async function showDropdown(e: Pick<MouseEvent, 'clientX' | 'clientY'>) {
     dropdownShowing.value = false
     await nextTick()
     dropdownShowing.value = true
@@ -194,11 +197,11 @@ function stateToColorClass(state: DownloadTaskState) {
   <SelectionArea
     ref="selectionAreaRef"
     class="h-full flex flex-col selection-container box-border px-2"
-    :options="{ selectables: '.selectable', features: { deselectOnBlur: true } }"
+    :options="SELECTION_OPTIONS"
     @contextmenu="showDropdown"
     @move="updateSelectedIds"
     @start="unselectAll">
-    <span class="ml-auto select-none">{{ t('uncompleted_progresses.usage_tips') }}</span>
+    <span class="ml-auto select-none">{{ touch ? t('uncompleted_progresses.usage_tips_touch') : t('uncompleted_progresses.usage_tips') }}</span>
     <div class="h-full select-none">
       <div
         v-for="[comicId, { state, comic, percentage, indicator }] in uncompletedProgresses"
@@ -206,14 +209,17 @@ function stateToColorClass(state: DownloadTaskState) {
         ref="selectableRefs"
         :data-key="comicId"
         :class="[
-          'selectable p-3 m-1 mb-2 rounded-lg',
+          'selectable p-3 m-1 mb-2 rounded-lg relative',
           selectedIds.has(comicId) ? 'selected shadow-md' : 'hover:bg-gray-1',
         ]"
         @dblclick="() => onProgressDoubleClick(state, comicId)"
         @contextmenu="() => onContextMenu(comicId)">
         <div class="flex items-center" :title="comic.title">
           <div class="text-ellipsis whitespace-nowrap overflow-hidden">{{ comic.title }}</div>
+          <!-- room for the ⋮, which sits on the corner of the row -->
+          <div v-if="touch" class="w-10 flex-shrink-0" />
         </div>
+        <item-menu-button @open="(at) => { onContextMenu(comicId); showDropdown(at) }" />
         <div class="flex items-center" :title="comic.title">
           <n-icon :class="[stateToColorClass(state), 'mr-2']" :size="22">
             <PhCloudArrowDown v-if="state === 'Downloading'" />

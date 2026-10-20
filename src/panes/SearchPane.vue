@@ -8,7 +8,8 @@ import { useI18n } from '../utils.ts'
 import { PhMagnifyingGlass, PhArrowRight, PhChecks, PhCloudArrowDown, PhCloud, PhBellRinging } from '@phosphor-icons/vue'
 import FloatLabelInput from '../components/FloatLabelInput.vue'
 import { SelectionArea } from '@viselect/vue'
-import { useMultiSelect } from '../composables/useMultiSelect.ts'
+import { useMultiSelect, SELECTION_OPTIONS } from '../composables/useMultiSelect.ts'
+import ItemMenuButton from '../components/ItemMenuButton.vue'
 import FollowDialog from '../components/FollowDialog.vue'
 import { isWeb } from '../platform.ts'
 
@@ -329,7 +330,7 @@ function useContextMenu() {
     },
   ])
 
-  async function showContextMenu(e: MouseEvent) {
+  async function showContextMenu(e: Pick<MouseEvent, 'clientX' | 'clientY'>) {
     contextMenuShowing.value = false
     await nextTick()
     contextMenuShowing.value = true
@@ -396,7 +397,7 @@ defineExpose({ search })
       </n-button>
     </n-input-group>
 
-    <div class="flex gap-2 px-2">
+    <div class="flex gap-2 px-2 wrap-on-narrow">
       <n-button
         size="small"
         type="warning"
@@ -428,7 +429,7 @@ defineExpose({ search })
       v-if="store.searchResult !== undefined"
       ref="selectionAreaRef"
       class="flex flex-col gap-row-2 overflow-auto box-border px-2 selection-container"
-      :options="{ selectables: '.selectable', features: { deselectOnBlur: true } }"
+      :options="SELECTION_OPTIONS"
       @contextmenu="showContextMenu"
       @move="updateSelectedIds"
       @start="unselectAll">
@@ -449,6 +450,7 @@ defineExpose({ search })
             @update:checked="(checked: boolean) => toggleSelection(comic.id, checked)"
           />
         </div>
+        <item-menu-button @open="(at) => { onContextMenu(comic.id); showContextMenu(at) }" />
       </div>
       <n-dropdown
         placement="bottom-start"

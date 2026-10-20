@@ -1,0 +1,14 @@
+{
+  "name": "hitomi-downloader",
+  "short_name": "HI-DL",
+  "description": "Download comics from hitomi.la, read and export them",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#6275C0",
+  "background_color": "#ffffff",
+  "icons": [
+    { "src": "/icons/icon-256.png", "sizes": "256x256", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

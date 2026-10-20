@@ -5,9 +5,11 @@
 //! - `GET /api/comics/{id}/cover`, `GET /api/comics/{id}/pages/{index}`: the images
 //! - `GET /api/health`: for a container healthcheck
 //! - `/auth/*`: the login page, the login and the session
+//! - `/manifest.webmanifest`, `/icons/*`: the web app manifest and the icons, without a login
 //! - everything else: the built frontend
 //!
-//! Everything but the health check and `/auth` needs a login, see [`auth`].
+//! Everything but the health check, `/auth`, the manifest and the icons needs a login, see
+//! [`auth`].
 //! `hitomi-server hash-password` prints the hash for `HITOMI_PASSWORD_HASH`.
 mod auth;
 mod commands;
@@ -344,7 +346,20 @@ fn app(state: AppState, auth: Auth, web_dir: &Path) -> Router {
             auth::require_session,
         ));
 
-    Router::new().nest("/auth", auth.router()).merge(protected)
+    // The icons and the manifest of the web app, without a login: the login page shows the
+    // icon, and a browser asks for these without its cookie for the home screen. Nothing in
+    // them is the user's.
+    let public = Router::new()
+        .route_service(
+            "/manifest.webmanifest",
+            ServeFile::new(web_dir.join("manifest.webmanifest")),
+        )
+        .nest_service("/icons", ServeDir::new(web_dir.join("icons")));
+
+    Router::new()
+        .nest("/auth", auth.router())
+        .merge(public)
+        .merge(protected)
 }
 
 /// Check the library and export dir, and make them the ones in the config
@@ -448,6 +463,13 @@ mod tests {
             let web_dir = root.join("web");
             std::fs::create_dir_all(&web_dir).unwrap();
             std::fs::write(web_dir.join("index.html"), "<!doctype html>app").unwrap();
+            std::fs::write(
+                web_dir.join("manifest.webmanifest"),
+                r#"{"short_name":"HI-DL"}"#,
+            )
+            .unwrap();
+            std::fs::create_dir_all(web_dir.join("icons")).unwrap();
+            std::fs::write(web_dir.join("icons").join("icon-32.png"), b"\x89PNG").unwrap();
 
             let (events, _) = broadcast::channel(16);
             let comics = Arc::new(ComicCache::default());
@@ -1248,6 +1270,37 @@ mod tests {
         assert_eq!(login.status, StatusCode::OK);
         assert_eq!(login.headers["x-frame-options"], "DENY");
         assert!(String::from_utf8_lossy(&login.body).contains("/auth/methods"));
+    }
+
+    #[tokio::test]
+    async fn the_icons_and_the_manifest_need_no_login() {
+        let manifest = anonymous("GET", "/manifest.webmanifest", None).await;
+        assert_eq!(manifest.status, StatusCode::OK);
+        assert_eq!(json_of(&manifest.body)["short_name"], "HI-DL");
+
+        let icon = anonymous("GET", "/icons/icon-32.png", None).await;
+        assert_eq!(icon.status, StatusCode::OK);
+        assert_eq!(icon.headers["content-type"], "image/png");
+        assert_eq!(icon.body, b"\x89PNG");
+
+        // only what is in there: a missing icon is missing, and nothing else is reached
+        for uri in [
+            "/icons/none.png",
+            "/icons/../index.html",
+            "/icons/%2e%2e/index.html",
+        ] {
+            let response = anonymous("GET", uri, None).await;
+            assert_eq!(response.status, StatusCode::NOT_FOUND, "{uri}");
+            assert!(
+                !String::from_utf8_lossy(&response.body).contains("app"),
+                "{uri}"
+            );
+        }
+        // the app itself still needs the login
+        assert_eq!(
+            anonymous("GET", "/index.html", None).await.status,
+            StatusCode::SEE_OTHER
+        );
     }
 
     #[tokio::test]

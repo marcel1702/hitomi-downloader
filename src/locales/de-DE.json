@@ -34,7 +34,9 @@
     "there_is": "Dort findest du",
     "you_can_also_uncheck": "Du kannst auch das Häkchen entfernen bei",
     "this_will_disable_file_logging": "Damit wird nicht mehr in Dateien protokolliert",
-    "log_out": "Abmelden"
+    "log_out": "Abmelden",
+    "menu": "Menü",
+    "language": "Sprache"
   },
   "log_viewer": {
     "name": "Log",
@@ -209,6 +211,11 @@
     "shortcut_escape": "Overlay schließen, Vollbild beenden",
     "shortcut_help": "Diese Liste",
     "shortcut_toolbar": "Werkzeugleiste ein- / ausblenden (Vollbild)",
+    "gestures_title": "Gesten",
+    "swipe": "Nach links / rechts wischen",
+    "swipe_action": "Nächste / vorherige Seite (Seitenansicht)",
+    "tap_sides": "Links / rechts tippen",
+    "tap_middle": "In die Mitte der Seite tippen",
     "click_sides": "Klick links / rechts",
     "click_sides_action": "Vorherige / nächste Seite (Seitenansicht)",
     "click_middle": "Klick in die Mitte der Seite",
@@ -230,7 +237,8 @@
   },
   "uncompleted_progresses": {
     "name": "Läuft",
-    "usage_tips": "Mit gedrückter linker Maustaste auswählen, Rechtsklick für das Menü, Doppelklick zum Pausieren/Fortsetzen"
+    "usage_tips": "Mit gedrückter linker Maustaste auswählen, Rechtsklick für das Menü, Doppelklick zum Pausieren/Fortsetzen",
+    "usage_tips_touch": "Antippen zum Auswählen, ⋮ für das Menü zum Pausieren, Fortsetzen oder Abbrechen"
   },
   "completed_progresses": {
     "name": "Abgeschlossen"

@@ -74,7 +74,7 @@ async function showConfigInFileManager() {
 
 <template>
   <n-modal v-model:show="showing" v-if="store.config !== undefined">
-    <n-dialog :showIcon="false" :title="t('settings_dialog.name')" @close="showing = false">
+    <n-dialog class="app-dialog" :showIcon="false" :title="t('settings_dialog.name')" @close="showing = false">
       <div class="flex flex-col gap-row-2">
         <n-radio-group class="flex gap-2" v-model:value="store.config.downloadFormat">
           <span>{{ t('settings_dialog.download_format') }}</span>

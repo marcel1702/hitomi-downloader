@@ -29,6 +29,10 @@ export async function setAppFullscreen(on: boolean): Promise<void> {
     await getCurrentWindow().setFullscreen(on)
     return
   }
+  // Safari on the iPhone has no fullscreen for a page, the reader still lies over the app there
+  if (!document.fullscreenEnabled) {
+    return
+  }
   if (on && document.fullscreenElement === null) {
     await document.documentElement.requestFullscreen()
   } else if (!on && document.fullscreenElement !== null) {

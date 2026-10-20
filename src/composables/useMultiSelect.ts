@@ -1,6 +1,15 @@
 import { ref } from 'vue'
 import { SelectionArea, SelectionEvent } from '@viselect/vue'
 
+/**
+ * The options of every selection area: dragging a frame works with the mouse only. On a touch
+ * screen a finger scrolls the list, a tap still selects one item.
+ */
+export const SELECTION_OPTIONS = {
+  selectables: '.selectable',
+  features: { deselectOnBlur: true, touch: false },
+}
+
 export function useMultiSelect() {
   const selectedIds = ref<Set<number>>(new Set())
   const selectionAreaRef = ref<InstanceType<typeof SelectionArea>>()

@@ -34,7 +34,9 @@
     "there_is": "There is",
     "you_can_also_uncheck": "You can uncheck",
     "this_will_disable_file_logging": "This will stop file logging",
-    "log_out": "Log out"
+    "log_out": "Log out",
+    "menu": "Menu",
+    "language": "Language"
   },
   "log_viewer": {
     "name": "Log",
@@ -209,6 +211,11 @@
     "shortcut_escape": "Close the overlay, exit fullscreen",
     "shortcut_help": "This list",
     "shortcut_toolbar": "Show / hide the toolbar (fullscreen)",
+    "gestures_title": "Gestures",
+    "swipe": "Swipe left / right",
+    "swipe_action": "Next / previous page (page mode)",
+    "tap_sides": "Tap left / right",
+    "tap_middle": "Tap in the middle of the page",
     "click_sides": "Click left / right",
     "click_sides_action": "Previous / next page (page mode)",
     "click_middle": "Click in the middle of the page",
@@ -230,7 +237,8 @@
   },
   "uncompleted_progresses": {
     "name": "Downloading",
-    "usage_tips": "Drag with left mouse button to select, right click for menu, double click to pause/continue"
+    "usage_tips": "Drag with left mouse button to select, right click for menu, double click to pause/continue",
+    "usage_tips_touch": "Tap to select, ⋮ for the menu to pause, continue or cancel"
   },
   "completed_progresses": {
     "name": "Completed"

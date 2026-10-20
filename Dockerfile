@@ -34,8 +34,10 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY index.html tsconfig.json tsconfig.node.json vite.config.ts uno.config.ts \
      auto-imports.d.ts components.d.ts ./
 COPY public public
-# the About dialog shows the logo of the desktop app
-COPY src-tauri/icons/128x128.png src-tauri/icons/128x128.png
+# the About dialog shows the logo of the desktop app, the favicon and the manifest use its icons
+# (`appIcons` in vite.config.ts)
+COPY src-tauri/icons/32x32.png src-tauri/icons/64x64.png src-tauri/icons/128x128.png \
+     src-tauri/icons/128x128@2x.png src-tauri/icons/icon.png src-tauri/icons/
 COPY src src
 RUN pnpm build:web
 

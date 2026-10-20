@@ -141,6 +141,7 @@ async function showLogsDirInFileManager() {
 <template>
   <n-modal v-model:show="showing" v-if="store.config !== undefined">
     <n-dialog
+      class="app-dialog"
       :showIcon="false"
       :title="`${t('log_viewer.logs_directory_size')}: ${formatedLogsDirSize}`"
       @close="showing = false"
