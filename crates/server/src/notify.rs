@@ -435,7 +435,7 @@ pub fn messages(happened: &[Happened], censored: bool, language: &str) -> Vec<Me
 /// The name of the app in a message, censored only the short one that says less
 fn app_name(censored: bool) -> &'static str {
     if censored {
-        "hi-dl"
+        "HI-DL"
     } else {
         "hitomi-downloader"
     }
@@ -696,7 +696,7 @@ mod tests {
         for language in ["en-US", "de-DE"] {
             let censored = test_message(language, true);
             let text = format!("{} {}", censored.title, censored.body);
-            assert!(text.contains("hi-dl") && !text.contains("hitomi"), "{text}");
+            assert!(text.contains("HI-DL") && !text.contains("hitomi"), "{text}");
             let open = test_message(language, false);
             assert!(
                 open.title.starts_with("hitomi-downloader:"),
