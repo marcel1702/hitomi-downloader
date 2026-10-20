@@ -467,16 +467,23 @@ pub async fn run(
 ) {
     // the titles of the downloads that are known, the update of a state only names the id
     let mut titles: HashMap<i32, String> = HashMap::new();
+    // The state each download was last in. The download manager tells an end state twice, once
+    // when the download sets it and once more as the change of its state, so only a change counts.
+    let mut states: HashMap<i32, DownloadTaskState> = HashMap::new();
     let mut waiting: Vec<Happened> = Vec::new();
     let mut since: Option<(Instant, Instant)> = None;
     loop {
         let due = since.map(|(first, last)| (last + debounce.quiet).min(first + debounce.max_wait));
         tokio::select! {
             event = events.recv() => match event {
-                Ok(Event::DownloadTask(DownloadTaskEvent::Create { comic, .. })) => {
+                Ok(Event::DownloadTask(DownloadTaskEvent::Create { comic, state, .. })) => {
                     titles.insert(comic.id, comic.title.clone());
+                    states.insert(comic.id, state);
                 }
                 Ok(Event::DownloadTask(DownloadTaskEvent::Update { comic_id, state, .. })) => {
+                    if states.insert(comic_id, state) == Some(state) {
+                        continue;
+                    }
                     let title = || titles.get(&comic_id).cloned().unwrap_or_else(|| format!("#{comic_id}"));
                     match state {
                         DownloadTaskState::Completed => notifier.tell(Happened::Completed { title: title() }),
@@ -984,6 +991,44 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn an_end_state_told_twice_counts_once() {
+        let (url, seen) = fake_apprise(StatusCode::OK).await;
+        // as the download manager tells it: the end state once from the download, once more
+        // as the change of the state, and progress updates in between
+        let events = vec![
+            create(1, "Alpha"),
+            update(1, DownloadTaskState::Downloading),
+            update(1, DownloadTaskState::Downloading),
+            update(1, DownloadTaskState::Completed),
+            update(1, DownloadTaskState::Completed),
+            create(2, "Beta"),
+            update(2, DownloadTaskState::Failed),
+            update(2, DownloadTaskState::Failed),
+        ];
+        let sent = sent_after(settings(&url), &seen, events, vec![]).await;
+        let titles: Vec<&str> = sent
+            .iter()
+            .map(|body| body["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, ["1 comic downloaded", "1 download failed"]);
+        assert_eq!(sent[0]["body"], "• Alpha");
+
+        // downloaded again later, it counts again
+        let again = vec![
+            create(1, "Alpha"),
+            update(1, DownloadTaskState::Completed),
+            update(1, DownloadTaskState::Completed),
+            update(1, DownloadTaskState::Pending),
+            update(1, DownloadTaskState::Downloading),
+            update(1, DownloadTaskState::Completed),
+            update(1, DownloadTaskState::Completed),
+        ];
+        let sent = sent_after(settings(&url), &seen, again, vec![]).await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["title"], "2 comics downloaded");
     }
 
     #[tokio::test]
