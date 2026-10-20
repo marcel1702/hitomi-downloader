@@ -163,7 +163,7 @@ async function showDownloadDirInFileManager() {
 
 <template>
   <div v-if="store.config !== undefined" class="flex flex-col gap-2">
-    <div class="flex gap-1 box-border px-2 pt-2">
+    <div class="flex flex-wrap gap-1 box-border px-2 pt-2">
       <!-- the folders of the web version are volumes of the server, the settings show them -->
       <n-input-group v-if="!isWeb">
         <n-input-group-label size="small">

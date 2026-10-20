@@ -35,4 +35,14 @@ const themeOverrides: GlobalThemeOverrides = {
 .selection-area {
   @apply bg-[rgba(46,115,252,0.5)];
 }
+
+/* on a phone the dialogs of the app take the whole screen, the content scrolls inside them */
+[data-narrow] .n-dialog.app-dialog {
+  width: 100vw !important;
+  max-width: 100vw;
+  min-height: 100dvh;
+  margin: 0;
+  border-radius: 0;
+  box-sizing: border-box;
+}
 </style>

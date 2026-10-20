@@ -1,7 +1,7 @@
 <script setup lang="tsx">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
-import type { TabsInst } from 'naive-ui'
-import { useMessage, useNotification } from 'naive-ui'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { DropdownOption, TabsInst } from 'naive-ui'
+import { NIcon, useMessage, useNotification } from 'naive-ui'
 import { commands } from './bindings.ts'
 import { isWeb } from './platform.ts'
 import { logOut } from './web/session.ts'
@@ -15,8 +15,9 @@ import ComicPane from './panes/ComicPane.vue'
 import ReaderPane from './panes/ReaderPane.vue'
 import DownloadingPane from './panes/DownloadingPane.vue'
 import SubscriptionsPane from './panes/SubscriptionsPane.vue'
-import { PhClockCounterClockwise, PhInfo, PhSignOut, PhTranslate } from '@phosphor-icons/vue'
+import { PhClockCounterClockwise, PhDotsThreeOutline, PhInfo, PhSignOut, PhTranslate } from '@phosphor-icons/vue'
 import { locales, resolveLocale } from './locales'
+import { useDevice } from './composables/useDevice.ts'
 
 const { t, locale } = useI18n()
 const store = useStore()
@@ -31,6 +32,38 @@ const localeOptions = Object.entries(locales).map(([key, value]) => ({
   label: value.name,
   value: key,
 }))
+
+// On a narrow screen the downloads are a tab of their own and the buttons above them a menu
+const { narrow } = useDevice()
+const runningDownloads = computed(
+  () =>
+    Array.from(store.progresses.values()).filter(({ state }) => state === 'Downloading' || state === 'Pending')
+      .length,
+)
+// back to two columns, the downloads tab is gone
+watch(narrow, (isNarrow) => {
+  if (!isNarrow && store.currentTabName === 'downloads') store.currentTabName = 'search'
+})
+// The downloads pane moves into its tab once the tab is rendered. The element, not a selector:
+// the teleport looks a selector up only once, and the tab is a new element after each switch.
+const downloadsTab = ref<HTMLElement | null>(null)
+const menuOptions = computed<DropdownOption[]>(() => [
+  { key: 'log', label: t('log_viewer.name'), icon: () => <NIcon size="20"><PhClockCounterClockwise /></NIcon> },
+  { key: 'about', label: t('about_dialog.name'), icon: () => <NIcon size="20"><PhInfo /></NIcon> },
+  {
+    key: 'language',
+    label: t('app_content.language'),
+    icon: () => <NIcon size="20"><PhTranslate /></NIcon>,
+    children: localeOptions.map(({ label, value }) => ({ key: `language:${value}`, label })),
+  },
+  ...(isWeb ? [{ key: 'logout', label: t('app_content.log_out'), icon: () => <NIcon size="20"><PhSignOut /></NIcon> }] : []),
+])
+function onMenuSelect(key: string) {
+  if (key === 'log') logViewerShowing.value = true
+  else if (key === 'about') aboutDialogShowing.value = true
+  else if (key === 'logout') logOut()
+  else if (key.startsWith('language:')) locale.value = resolveLocale(key.slice('language:'.length))
+}
 
 const searchPaneRef = ref<InstanceType<typeof SearchPane>>()
 const tabsInstRef = ref<TabsInst | null>(null)
@@ -132,7 +165,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-if="store.config !== undefined" class="h-screen flex flex-col">
+  <div v-if="store.config !== undefined" class="app-root h-screen flex flex-col">
     <div class="flex flex-1 overflow-hidden">
       <n-tabs
         ref="tabsInstRef"
@@ -174,8 +207,28 @@ onMounted(async () => {
           </template>
           <subscriptions-pane v-if="searchPaneRef !== undefined" :search="searchPaneRef.search" />
         </n-tab-pane>
+        <!-- one column: the downloads of the right column move in here, see the teleport below -->
+        <n-tab-pane v-if="narrow" class="h-full overflow-hidden p-0!" name="downloads" display-directive="show">
+          <template #tab>
+            <n-badge :value="runningDownloads" :show="runningDownloads > 0" :offset="[10, -2]">
+              {{ t('downloading_pane.name') }}
+            </n-badge>
+          </template>
+          <div ref="downloadsTab" id="downloads-tab" class="h-full flex flex-col" />
+        </n-tab-pane>
+        <template v-if="narrow" #suffix>
+          <n-dropdown trigger="click" placement="bottom-end" :options="menuOptions" @select="onMenuSelect">
+            <n-button quaternary circle :title="t('app_content.menu')">
+              <template #icon>
+                <n-icon size="20">
+                  <PhDotsThreeOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </n-dropdown>
+        </template>
       </n-tabs>
-      <div class="flex-[2] min-w-0 overflow-auto h-full flex flex-col border-l border-gray-2">
+      <div v-show="!narrow" class="flex-[2] min-w-0 overflow-auto h-full flex flex-col border-l border-gray-2">
         <div class="flex gap-2 px-2 py-1 box-border items-center border-b border-gray-2 bg-gray-50">
           <n-button size="small" quaternary @click="logViewerShowing = true">
             <template #icon>
@@ -209,10 +262,13 @@ onMounted(async () => {
             <n-select class="w-28" size="small" v-model:value="locale" :options="localeOptions" />
           </div>
         </div>
-        <downloading-pane
-          class="flex-1 overflow-auto"
-          v-if="searchPaneRef !== undefined"
-          :search="searchPaneRef.search" />
+        <!-- moved, not mounted again: the pane listens to the download events for the whole app -->
+        <Teleport :to="downloadsTab ?? 'body'" :disabled="downloadsTab === null">
+          <downloading-pane
+            class="flex-1 overflow-auto"
+            v-if="searchPaneRef !== undefined"
+            :search="searchPaneRef.search" />
+        </Teleport>
       </div>
     </div>
     <log-viewer v-model:showing="logViewerShowing" />
@@ -230,5 +286,13 @@ onMounted(async () => {
 
 :deep(.n-tabs-nav) {
   @apply px-2;
+}
+
+/* one column on a phone: the visible height without the bars of the browser, clear of a notch */
+:global([data-narrow]) .app-root {
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  box-sizing: border-box;
 }
 </style>

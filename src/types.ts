@@ -1,6 +1,6 @@
 import { DownloadTaskEvent } from './bindings.ts'
 
-export type CurrentTabName = 'search' | 'downloaded' | 'comic' | 'reader' | 'following'
+export type CurrentTabName = 'search' | 'downloaded' | 'comic' | 'reader' | 'following' | 'downloads'
 
 export type ProgressData = Extract<DownloadTaskEvent, { event: 'Create' }>['data'] & {
   percentage: number
