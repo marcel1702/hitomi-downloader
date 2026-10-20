@@ -64,7 +64,7 @@ async function follow() {
 
 <template>
   <n-modal v-model:show="showing">
-    <n-dialog :show-icon="false" :title="t('follow_dialog.title')" @close="showing = false">
+    <n-dialog class="app-dialog" :show-icon="false" :title="t('follow_dialog.title')" @close="showing = false">
       <div class="flex flex-col gap-3">
         <div class="font-mono bg-gray-100 rounded px-2 py-1 break-all">{{ preview?.query ?? query }}</div>
 

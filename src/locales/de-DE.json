@@ -34,7 +34,9 @@
     "there_is": "Dort findest du",
     "you_can_also_uncheck": "Du kannst auch das Häkchen entfernen bei",
     "this_will_disable_file_logging": "Damit wird nicht mehr in Dateien protokolliert",
-    "log_out": "Abmelden"
+    "log_out": "Abmelden",
+    "menu": "Menü",
+    "language": "Sprache"
   },
   "log_viewer": {
     "name": "Log",

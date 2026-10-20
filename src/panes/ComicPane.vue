@@ -266,7 +266,7 @@ function selectAll(event: FocusEvent) {
     </div>
   </div>
   <n-modal v-model:show="pathDialogShowing">
-    <n-dialog :showIcon="false" :title="t('comic_pane.path_dialog_title')" @close="pathDialogShowing = false">
+    <n-dialog class="app-dialog" :showIcon="false" :title="t('comic_pane.path_dialog_title')" @close="pathDialogShowing = false">
       <!-- wrapped, so that a long path is seen whole -->
       <n-input
         class="path font-mono"

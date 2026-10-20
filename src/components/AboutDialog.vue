@@ -17,7 +17,7 @@ onMounted(async () => {
 
 <template>
   <n-modal v-model:show="showing">
-    <n-dialog :showIcon="false" @close="showing = false">
+    <n-dialog class="app-dialog" :showIcon="false" @close="showing = false">
       <div class="flex flex-col items-center gap-row-6">
         <img :src="icon" alt="icon" class="w-32 h-32" />
         <div class="text-center text-gray-400 text-xs">
