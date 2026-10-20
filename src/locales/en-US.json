@@ -259,5 +259,21 @@
     "saved": "Kavita settings saved",
     "connected": "Connected, Kavita has {count} libraries. Choose the one this library is in.",
     "connected_library": "Connected, the library \"{name}\" is scanned after downloads."
+  },
+  "notify": {
+    "title": "Notifications (Apprise)",
+    "explanation": "Finished and failed downloads and what the followed searches found are sent through an Apprise API server to the services of the Apprise URLs. What happens close together is one message. Leave it empty to send nothing.",
+    "server": "Apprise server",
+    "urls_placeholder": "Use Apprise URL format, one per line. Examples: discord://WebhookID/Token, slack://TokenA/TokenB/TokenC",
+    "urls_saved": "{count} Apprise URL(s) saved. Enter new ones to replace them, leave empty to keep them.",
+    "urls_clear": "Remove the saved Apprise URLs",
+    "on_completed": "Download finished",
+    "on_failed": "Download failed",
+    "on_followed": "New galleries from followed searches",
+    "censored": "Censor the messages: only how many, no titles of comics and no searches",
+    "test": "Send Test",
+    "test_sent": "Sent, the test message should arrive in a moment.",
+    "save": "Save",
+    "saved": "Notification settings saved"
   }
 }

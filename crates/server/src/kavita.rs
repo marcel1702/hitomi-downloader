@@ -233,7 +233,7 @@ async fn checked(response: reqwest::Response, what: &str) -> anyhow::Result<Vec<
 }
 
 /// Write `bytes` to `file` in one go, with the rights `0600` from the start
-fn write_private(file: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+pub(crate) fn write_private(file: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
     use std::io::Write as _;
 
     let temp = file.with_extension("json.tmp");

@@ -17,6 +17,7 @@ mod files;
 mod follow;
 mod images;
 mod kavita;
+mod notify;
 mod paths;
 mod settings;
 mod state;
@@ -109,6 +110,19 @@ async fn run() -> anyhow::Result<()> {
         kavita::Debounce::default(),
         shutdown.clone(),
     ));
+    let (notifier, notifications) =
+        notify::Notifier::open(settings.config_dir.join("apprise.json"));
+    tokio::spawn(notify::run(
+        notifier.clone(),
+        events.subscribe(),
+        notifications,
+        {
+            let context = context.clone();
+            move || context.config().read().language.clone()
+        },
+        notify::DEBOUNCE,
+        shutdown.clone(),
+    ));
     // only now: a download that comes back works out its directory from the pinned library
     // and the file name limit, and says so in the log
     context.download_manager().restore_queue();
@@ -120,6 +134,15 @@ async fn run() -> anyhow::Result<()> {
         Arc::new(ContextDownloads::new(context.clone())),
         settings.follow_interval,
     );
+    subscriptions.on_new_galleries({
+        let notifier = notifier.clone();
+        Arc::new(move |query: &str, count: usize| {
+            notifier.tell(notify::Happened::Followed {
+                query: query.to_string(),
+                count,
+            });
+        })
+    });
     let state = AppState {
         context: context.clone(),
         pinned_dirs,
@@ -128,6 +151,7 @@ async fn run() -> anyhow::Result<()> {
         comics,
         subscriptions: subscriptions.clone(),
         kavita,
+        notifier,
         shutdown: shutdown.clone(),
     };
     match settings.follow_interval {
@@ -305,6 +329,7 @@ fn app(state: AppState, auth: Auth, web_dir: &Path) -> Router {
         .merge(commands::router())
         .merge(follow::router())
         .merge(kavita::router())
+        .merge(notify::router())
         .fallback(api_not_found);
 
     // Paths the frontend routes itself get its index.html
@@ -459,6 +484,7 @@ mod tests {
                 comics,
                 subscriptions,
                 kavita: kavita::Kavita::open(root.join("config").join("kavita.json")),
+                notifier: notify::Notifier::open(root.join("config").join("apprise.json")).0,
                 shutdown,
             };
             (state, web_dir)
@@ -628,6 +654,74 @@ mod tests {
             cleared,
             json!({ "url": "", "libraryId": null, "hasApiKey": false })
         );
+    }
+
+    #[tokio::test]
+    async fn the_notification_settings_never_hand_out_the_apprise_urls() {
+        test_state();
+        let args = |urls: Value, url: &str| {
+            json!({ "url": url, "urls": urls, "onCompleted": true, "onFailed": false,
+                    "onFollowed": true, "censored": true })
+        };
+        let (status, empty) = post_json("/api/get_notify_settings", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(empty["urlCount"], json!(0));
+        assert_eq!(empty["censored"], json!(false));
+
+        let (status, saved) = post_json(
+            "/api/save_notify_settings",
+            args(
+                json!(["discord://id/secret-token", "tgram://bot/chat"]),
+                "http://apprise:8000/",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+        assert_eq!(
+            saved,
+            json!({ "url": "http://apprise:8000", "urlCount": 2, "onCompleted": true,
+                    "onFailed": false, "onFollowed": true, "censored": true })
+        );
+
+        // without URLs in the arguments, the ones there are stay; they are never read back
+        let (_, kept) = post_json(
+            "/api/save_notify_settings",
+            args(Value::Null, "http://apprise:8000"),
+        )
+        .await;
+        assert_eq!(kept["urlCount"], json!(2));
+        let (_, read) = post_json("/api/get_notify_settings", json!({})).await;
+        assert!(!read.to_string().contains("secret-token"), "{read}");
+
+        // an Apprise URL that is none, and a server URL without http, are refused
+        let (status, refused) = post_json(
+            "/api/save_notify_settings",
+            args(json!(["not-a-url"]), "http://apprise:8000"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(refused["err_title"], json!("Notifications"));
+        let (status, _) = post_json(
+            "/api/save_notify_settings",
+            args(Value::Null, "apprise:8000"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // an Apprise server that can not be reached is the answer of the test
+        let (status, tested) =
+            post_json("/api/test_notify", args(Value::Null, "http://127.0.0.1:9")).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(
+            tested["err_message"]
+                .as_str()
+                .unwrap()
+                .contains("can not be reached"),
+            "{tested}"
+        );
+
+        let (_, cleared) = post_json("/api/save_notify_settings", args(json!([]), "")).await;
+        assert_eq!(cleared["urlCount"], json!(0));
     }
 
     #[tokio::test]
@@ -1124,6 +1218,9 @@ mod tests {
             ("POST", "/api/get_kavita_settings"),
             ("POST", "/api/save_kavita_settings"),
             ("POST", "/api/test_kavita"),
+            ("POST", "/api/get_notify_settings"),
+            ("POST", "/api/save_notify_settings"),
+            ("POST", "/api/test_notify"),
             ("GET", "/api/events"),
             ("GET", "/api/comics/3651691/cover"),
             ("POST", "/api/no_such_command"),

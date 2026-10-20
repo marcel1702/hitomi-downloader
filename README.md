@@ -32,7 +32,7 @@ Download and run, no installation of a runtime required.
 | ☑️ Selection and delete | Tick several comics to download, export or delete them together, in the search and the local tab. |
 | 🌐 English and German | The interface ships both languages and switches at runtime. |
 | 🗂️ Custom folder structure | Freely configurable naming from fields like type, artist, title, language and id. |
-| 🐳 Web version | The same interface in the browser, as a Docker image for a server behind a login: [one place](#-web-version-docker) for the downloads, on a folder of the server. It keeps its download queue across restarts, can [follow searches](#following-searches), downloading new galleries by itself, and can have [Kavita](#kavita) scan the library after downloads. |
+| 🐳 Web version | The same interface in the browser, as a Docker image for a server behind a login: [one place](#-web-version-docker) for the downloads, on a folder of the server. It keeps its download queue across restarts, can [follow searches](#following-searches), downloading new galleries by itself, can have [Kavita](#kavita) scan the library after downloads, and [notifies](#notifications) through Apprise. |
 
 ## 🖥️ Screenshots
 
@@ -195,6 +195,36 @@ scan: it starts 3 seconds after the last of them, and at the latest 30 seconds a
 shows up while it runs. A scan that fails is only logged, the download is done either way. Without a URL, a key
 and a library nothing is sent to Kavita. The settings are the file `kavita.json` in the config directory,
 readable by its owner only. The API key never leaves the server again, the settings only show that there is one.
+
+### Notifications
+
+The web version can tell you about finished and failed downloads and about the new galleries of the followed
+searches, through an [Apprise API](https://github.com/caronc/apprise-api) server: Discord, Telegram, ntfy,
+e-mail and the other services of [Apprise](https://github.com/caronc/apprise/wiki). In the **Settings**:
+
+1. **Apprise server**: where the server reaches it, for example `http://apprise:8000`.
+2. **Apprise URLs**, one per line, in the [URL format of Apprise](https://github.com/caronc/apprise/wiki#notification-services),
+   for example `discord://WebhookID/Token` or `tgram://BotToken/ChatID`. They go along with every message to the
+   stateless `POST /notify/` of the Apprise server, which stores nothing of them.
+3. What is told: **Download finished**, **Download failed**, **New galleries from followed searches**.
+4. **Censor the messages**: they only say how many, never the titles of the comics or the followed searches.
+5. **Send Test**, then **Save**.
+
+What happens close together is one message per kind, *"12 comics downloaded"* with the first ten titles: it goes
+out 30 seconds after the last of it, and at the latest 5 minutes after the first. A message that can not be sent
+is only logged. The messages are in the language of the interface. The settings are the file `apprise.json` in
+the config directory, readable by its owner only, and the Apprise URLs, which hold the tokens of the services,
+never leave the server again: the settings only show how many there are.
+
+An Apprise API server of its own, next to the downloader in the compose file:
+
+```yaml
+  apprise:
+    image: caronc/apprise:latest
+    restart: unless-stopped
+```
+
+The downloader reaches it as `http://apprise:8000` then.
 
 ### Versions and updates
 

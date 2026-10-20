@@ -274,7 +274,12 @@ pub struct Subscriptions {
     turn: tokio::sync::Mutex<()>,
     /// Whether [`Subscriptions::check_all`] runs
     checking_all: AtomicBool,
+    /// Told after a check that queued new galleries, see [`Subscriptions::on_new_galleries`]
+    on_new: Mutex<Option<NewGalleries>>,
 }
+
+/// What [`Subscriptions::on_new_galleries`] calls, with the query and how many it queued
+pub type NewGalleries = Arc<dyn Fn(&str, usize) + Send + Sync>;
 
 /// The current time as seconds since 1970
 pub fn now() -> i64 {
@@ -347,7 +352,14 @@ impl Subscriptions {
             checking: Mutex::new(HashSet::new()),
             turn: tokio::sync::Mutex::new(()),
             checking_all: AtomicBool::new(false),
+            on_new: Mutex::new(None),
         })
+    }
+
+    /// Call `on_new` after every check that queued new galleries, the notifications of the
+    /// server listen there
+    pub fn on_new_galleries(&self, on_new: NewGalleries) {
+        *self.on_new.lock() = Some(on_new);
     }
 
     pub fn list(&self, now: i64) -> SubscriptionList {
@@ -591,7 +603,15 @@ impl Subscriptions {
                 "Failed to check a followed search"
             ),
         }
+        let queued = outcome.as_ref().map_or(0, |found| found.queued);
         self.record(id, now, outcome);
+        if queued > 0 {
+            // taken out of the lock first, the callback may take its time
+            let on_new = self.on_new.lock().clone();
+            if let Some(on_new) = on_new {
+                on_new(&subscription.query, queued);
+            }
+        }
         Ok(())
     }
 
@@ -972,6 +992,40 @@ mod tests {
             .unwrap();
         assert_eq!(fixture.queued(), [6]);
         assert_eq!(fixture.view(&view.id).last_new, 0);
+    }
+
+    #[tokio::test]
+    async fn a_check_that_queued_new_galleries_says_so() {
+        let fixture = Fixture::new();
+        let told: Arc<Mutex<Vec<(String, usize)>>> = Arc::default();
+        let sink = told.clone();
+        fixture
+            .subscriptions
+            .on_new_galleries(Arc::new(move |query: &str, count: usize| {
+                sink.lock().push((query.to_string(), count));
+            }));
+        fixture.search.set("artist:beater", &[5, 4, 3]);
+        let view = fixture
+            .subscriptions
+            .create("artist:beater", FirstRun::FromNow, T0)
+            .await
+            .unwrap();
+
+        // nothing new, nothing is said
+        fixture
+            .subscriptions
+            .check(&view.id, T0 + HOUR)
+            .await
+            .unwrap();
+        assert!(told.lock().is_empty());
+
+        fixture.search.set("artist:beater", &[7, 6, 5, 4, 3]);
+        fixture
+            .subscriptions
+            .check(&view.id, T0 + 7 * HOUR)
+            .await
+            .unwrap();
+        assert_eq!(*told.lock(), [("artist:beater".to_string(), 2)]);
     }
 
     #[tokio::test]
