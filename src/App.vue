@@ -44,6 +44,12 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
   @apply bg-[rgba(46,115,252,0.5)];
 }
 
+/* a swipe sideways turns a page of the reader, it does not go back in the history of the tab */
+html[data-touch],
+html[data-touch] body {
+  overscroll-behavior-x: none;
+}
+
 /* a row of buttons that fits next to each other on a wide screen breaks into lines on a phone */
 [data-narrow] .wrap-on-narrow {
   flex-wrap: wrap;
