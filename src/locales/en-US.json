@@ -232,7 +232,8 @@
   },
   "uncompleted_progresses": {
     "name": "Downloading",
-    "usage_tips": "Drag with left mouse button to select, right click for menu, double click to pause/continue"
+    "usage_tips": "Drag with left mouse button to select, right click for menu, double click to pause/continue",
+    "usage_tips_touch": "Tap to select, ⋮ for the menu to pause, continue or cancel"
   },
   "completed_progresses": {
     "name": "Completed"

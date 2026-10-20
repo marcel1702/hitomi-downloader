@@ -8,7 +8,8 @@ import ComicCard from '../components/ComicCard.vue'
 import { useI18n } from '../utils.ts'
 import { PhChecks, PhFilePdf, PhFileZip, PhFolderOpen, PhTrash } from '@phosphor-icons/vue'
 import { SelectionArea } from '@viselect/vue'
-import { useMultiSelect } from '../composables/useMultiSelect.ts'
+import { useMultiSelect, SELECTION_OPTIONS } from '../composables/useMultiSelect.ts'
+import ItemMenuButton from '../components/ItemMenuButton.vue'
 import { useRevealPath } from '../composables/useRevealPath.ts'
 import { useDeleteComics } from '../composables/useDeleteComics.ts'
 import { isWeb } from '../platform.ts'
@@ -330,7 +331,7 @@ function useContextMenu() {
     },
   ])
 
-  async function showContextMenu(e: MouseEvent) {
+  async function showContextMenu(e: Pick<MouseEvent, 'clientX' | 'clientY'>) {
     contextMenuShowing.value = false
     await nextTick()
     contextMenuShowing.value = true
@@ -374,7 +375,7 @@ function useContextMenu() {
         :placeholder="t('downloaded_pane.search_placeholder')" />
       <n-select class="w-44" size="small" v-model:value="sortPreset" :options="sortOptions" />
     </div>
-    <div class="flex gap-2 px-2">
+    <div class="flex gap-2 px-2 wrap-on-narrow">
       <n-button size="small" :disabled="targetComics.length === 0" @click="exportCbz(targetComics)">
         <template #icon>
           <n-icon size="18"><PhFileZip /></n-icon>
@@ -410,7 +411,7 @@ function useContextMenu() {
       v-if="currentPageComics.length > 0"
       ref="selectionAreaRef"
       class="flex flex-col gap-row-2 overflow-auto box-border px-2 selection-container"
-      :options="{ selectables: '.selectable', features: { deselectOnBlur: true } }"
+      :options="SELECTION_OPTIONS"
       @contextmenu="showContextMenu"
       @move="updateSelectedIds"
       @start="unselectAll">
@@ -429,6 +430,7 @@ function useContextMenu() {
             @update:checked="(checked: boolean) => toggleSelection(comic.id, checked)"
           />
         </div>
+        <item-menu-button @open="(at) => { onContextMenu(comic.id); showContextMenu(at) }" />
       </div>
       <n-dropdown
         placement="bottom-start"

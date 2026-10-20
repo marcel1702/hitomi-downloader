@@ -96,7 +96,7 @@ function tagNs(female: number, male: number): string {
       <div class="w-24 flex-shrink-0 mr-4 cursor-pointer" @click="pickComic">
         <img
           v-if="cover !== undefined"
-          class="w-full h-full object-contain transition-transform duration-200 hover:scale-108"
+          class="cover w-full h-full object-contain transition-transform duration-200 hover:scale-108"
           :src="cover"
           alt="" />
         <n-skeleton v-else class="w-full h-full" :sharp="false" />
@@ -190,3 +190,12 @@ function tagNs(female: number, male: number): string {
     </div>
   </n-card>
 </template>
+
+<style scoped>
+/* the cover grows under the mouse only, a finger has no hover and would leave it grown */
+@media (hover: none) {
+  .cover:hover {
+    transform: none;
+  }
+}
+</style>
