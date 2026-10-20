@@ -19,6 +19,8 @@ pub struct AppState {
     pub subscriptions: std::sync::Arc<hitomi_core::subscriptions::Subscriptions>,
     /// The Kavita that scans its library after downloads, if one is set up
     pub kavita: std::sync::Arc<crate::kavita::Kavita>,
+    /// The notifications through Apprise, if they are set up
+    pub notifier: std::sync::Arc<crate::notify::Notifier>,
     /// Turns `true` once the server shuts down, which ends the event streams
     pub shutdown: watch::Receiver<bool>,
 }

@@ -37,6 +37,7 @@ declare module 'vue' {
     NModal: typeof import('naive-ui')['NModal']
     NModalProvider: typeof import('naive-ui')['NModalProvider']
     NNotificationProvider: typeof import('naive-ui')['NNotificationProvider']
+    NotifySettings: typeof import('./src/components/NotifySettings.vue')['default']
     NPagination: typeof import('naive-ui')['NPagination']
     NProgress: typeof import('naive-ui')['NProgress']
     NRadio: typeof import('naive-ui')['NRadio']

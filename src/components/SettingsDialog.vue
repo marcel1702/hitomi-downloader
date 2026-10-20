@@ -7,6 +7,7 @@ import { appDataDir } from '@tauri-apps/api/path'
 import { commands } from '../bindings.ts'
 import { isWeb } from '../platform.ts'
 import KavitaSettings from './KavitaSettings.vue'
+import NotifySettings from './NotifySettings.vue'
 
 const { t } = useI18n()
 
@@ -233,6 +234,8 @@ async function showConfigInFileManager() {
           </n-input-group>
           <!-- a Kavita that reads the library scans it after downloads -->
           <kavita-settings />
+          <!-- notifications through an Apprise server -->
+          <notify-settings />
         </template>
         <!-- the config of the web version is in the config volume of the server -->
         <n-button v-if="!isWeb" class="ml-auto mt-2" size="small" @click="showConfigInFileManager">
