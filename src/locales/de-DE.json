@@ -243,5 +243,21 @@
   "tray": {
     "show_window": "Fenster anzeigen",
     "quit": "Beenden"
+  },
+  "kavita": {
+    "explanation": "Nach Downloads scannt Kavita die hier gewählte Bibliothek, damit neue Comics dort sofort erscheinen. Den API-Key findest du in Kavita in den Benutzereinstellungen, sein Benutzer muss Admin sein. Leer lassen, um Kavita außen vor zu lassen.",
+    "url": "URL",
+    "api_key": "API-Key",
+    "api_key_placeholder": "Aus den Benutzereinstellungen von Kavita",
+    "api_key_saved": "Gespeichert, leer lassen, um ihn zu behalten",
+    "api_key_clear": "Gespeicherten API-Key entfernen",
+    "library": "Bibliothek",
+    "library_placeholder": "Verbindung testen, um die Bibliotheken zu laden",
+    "library_id": "Bibliothek {id}",
+    "test": "Verbindung testen",
+    "save": "Speichern",
+    "saved": "Kavita-Einstellungen gespeichert",
+    "connected": "Verbunden, Kavita hat {count} Bibliotheken. Wähle die, in der diese Bibliothek liegt.",
+    "connected_library": "Verbunden, die Bibliothek „{name}“ wird nach Downloads gescannt."
   }
 }

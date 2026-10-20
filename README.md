@@ -32,7 +32,7 @@ Download and run, no installation of a runtime required.
 | ☑️ Selection and delete | Tick several comics to download, export or delete them together, in the search and the local tab. |
 | 🌐 English and German | The interface ships both languages and switches at runtime. |
 | 🗂️ Custom folder structure | Freely configurable naming from fields like type, artist, title, language and id. |
-| 🐳 Web version | The same interface in the browser, as a Docker image for a server behind a login: [one place](#-web-version-docker) for the downloads, on a folder of the server. It keeps its download queue across restarts and can [follow searches](#following-searches), downloading new galleries by itself. |
+| 🐳 Web version | The same interface in the browser, as a Docker image for a server behind a login: [one place](#-web-version-docker) for the downloads, on a folder of the server. It keeps its download queue across restarts, can [follow searches](#following-searches), downloading new galleries by itself, and can have [Kavita](#kavita) scan the library after downloads. |
 
 ## 🖥️ Screenshots
 
@@ -179,6 +179,22 @@ request each, and the checks run one after the other. Galleries that are in the 
 downloaded already, are not downloaded twice. **A comic you delete from the library does not come back**: a
 followed search remembers what it has dealt with. A check that fails shows the error on its card and is tried
 again after half an hour. The followed searches are the file `subscriptions.json` in the config directory.
+
+### Kavita
+
+A [Kavita](https://www.kavitareader.com) that reads the library can scan it after downloads, so a new comic
+shows up there within seconds instead of at its next scheduled scan. In the **Settings** of the web version:
+
+1. **URL**: where the server reaches Kavita, for example `http://kavita:5000` when both are in one compose
+   network, or the address of its reverse proxy.
+2. **API Key**: from the user settings of Kavita. The user has to be an admin, Kavita only lets admins start a scan.
+3. **Test Connection** lists the libraries of Kavita. Choose the one the library of the downloader is in, then **Save**.
+
+A download that finishes asks for a scan of that library. Downloads that finish close to each other share one
+scan: it starts 3 seconds after the last of them, and at the latest 30 seconds after the first, so a long queue
+shows up while it runs. A scan that fails is only logged, the download is done either way. Without a URL, a key
+and a library nothing is sent to Kavita. The settings are the file `kavita.json` in the config directory,
+readable by its owner only. The API key never leaves the server again, the settings only show that there is one.
 
 ### Versions and updates
 

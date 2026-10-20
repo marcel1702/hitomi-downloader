@@ -16,6 +16,7 @@ mod events;
 mod files;
 mod follow;
 mod images;
+mod kavita;
 mod paths;
 mod settings;
 mod state;
@@ -99,6 +100,15 @@ async fn run() -> anyhow::Result<()> {
     check_volumes(&settings, &pinned_dirs)?;
     logger::init(&context, &[env!("CARGO_CRATE_NAME")])?;
     limit_file_names(&settings, &pinned_dirs)?;
+    let (shutdown_sender, shutdown) = watch::channel(false);
+    let kavita = kavita::Kavita::open(settings.config_dir.join("kavita.json"));
+    // subscribed before anything can download, no finished download is missed
+    tokio::spawn(kavita::run_scanner(
+        kavita.clone(),
+        events.subscribe(),
+        kavita::Debounce::default(),
+        shutdown.clone(),
+    ));
     // only now: a download that comes back works out its directory from the pinned library
     // and the file name limit, and says so in the log
     context.download_manager().restore_queue();
@@ -110,7 +120,6 @@ async fn run() -> anyhow::Result<()> {
         Arc::new(ContextDownloads::new(context.clone())),
         settings.follow_interval,
     );
-    let (shutdown_sender, shutdown) = watch::channel(false);
     let state = AppState {
         context: context.clone(),
         pinned_dirs,
@@ -118,6 +127,7 @@ async fn run() -> anyhow::Result<()> {
         events,
         comics,
         subscriptions: subscriptions.clone(),
+        kavita,
         shutdown: shutdown.clone(),
     };
     match settings.follow_interval {
@@ -294,6 +304,7 @@ fn app(state: AppState, auth: Auth, web_dir: &Path) -> Router {
         .nest("/comics", images::router().merge(files::router()))
         .merge(commands::router())
         .merge(follow::router())
+        .merge(kavita::router())
         .fallback(api_not_found);
 
     // Paths the frontend routes itself get its index.html
@@ -447,6 +458,7 @@ mod tests {
                 events,
                 comics,
                 subscriptions,
+                kavita: kavita::Kavita::open(root.join("config").join("kavita.json")),
                 shutdown,
             };
             (state, web_dir)
@@ -546,6 +558,76 @@ mod tests {
             .iter()
             .find(|subscription| subscription["query"] == query)
             .cloned()
+    }
+
+    #[tokio::test]
+    async fn the_kavita_settings_never_hand_out_the_api_key() {
+        test_state();
+        let (status, empty) = post_json("/api/get_kavita_settings", json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            empty,
+            json!({ "url": "", "libraryId": null, "hasApiKey": false })
+        );
+
+        let (status, saved) = post_json(
+            "/api/save_kavita_settings",
+            json!({ "url": "http://kavita:5000/", "apiKey": "secret-key", "libraryId": 3 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+        assert_eq!(
+            saved,
+            json!({ "url": "http://kavita:5000", "libraryId": 3, "hasApiKey": true })
+        );
+
+        // without an API key in the arguments, the one there is stays
+        let (_, again) = post_json(
+            "/api/save_kavita_settings",
+            json!({ "url": "http://kavita:5000", "apiKey": null, "libraryId": 4 }),
+        )
+        .await;
+        assert_eq!(again["hasApiKey"], json!(true));
+        assert_eq!(again["libraryId"], json!(4));
+        let (_, read) = post_json("/api/get_kavita_settings", json!({})).await;
+        assert!(!read.to_string().contains("secret-key"), "{read}");
+
+        // a URL that is none is refused and changes nothing
+        let (status, refused) = post_json(
+            "/api/save_kavita_settings",
+            json!({ "url": "kavita:5000", "apiKey": null, "libraryId": 4 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(refused["err_title"], json!("Kavita"));
+        let (_, read) = post_json("/api/get_kavita_settings", json!({})).await;
+        assert_eq!(read["url"], json!("http://kavita:5000"));
+
+        // a Kavita that can not be reached is the answer of the test, not an error of the server
+        let (status, tested) = post_json(
+            "/api/test_kavita",
+            json!({ "url": "http://127.0.0.1:9", "apiKey": null, "libraryId": null }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(
+            tested["err_message"]
+                .as_str()
+                .unwrap()
+                .contains("can not be reached"),
+            "{tested}"
+        );
+
+        // cleared again, Kavita is off
+        let (_, cleared) = post_json(
+            "/api/save_kavita_settings",
+            json!({ "url": "", "apiKey": "", "libraryId": null }),
+        )
+        .await;
+        assert_eq!(
+            cleared,
+            json!({ "url": "", "libraryId": null, "hasApiKey": false })
+        );
     }
 
     #[tokio::test]
@@ -1039,6 +1121,9 @@ mod tests {
             ("POST", "/api/get_config"),
             ("POST", "/api/list_subscriptions"),
             ("POST", "/api/create_subscription"),
+            ("POST", "/api/get_kavita_settings"),
+            ("POST", "/api/save_kavita_settings"),
+            ("POST", "/api/test_kavita"),
             ("GET", "/api/events"),
             ("GET", "/api/comics/3651691/cover"),
             ("POST", "/api/no_such_command"),
